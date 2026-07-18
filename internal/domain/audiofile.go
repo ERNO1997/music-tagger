@@ -8,6 +8,7 @@ type Format string
 const (
 	FormatMP3  Format = "mp3"
 	FormatFLAC Format = "flac"
+	FormatM4A  Format = "m4a"
 )
 
 // AudioFile is a physical audio file discovered on disk, identified solely

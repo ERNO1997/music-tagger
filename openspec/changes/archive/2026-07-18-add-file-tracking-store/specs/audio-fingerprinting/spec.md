@@ -1,8 +1,4 @@
-## Purpose
-
-Computing the acoustic identity of a local audio file via the external `fpcalc` (Chromaprint) binary. This is the sole basis for a file's identity throughout the system — filenames and embedded tags are never used.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Fingerprint computation via fpcalc
 The system SHALL compute an acoustic fingerprint and duration for a given local audio file by invoking the external `fpcalc` binary via `os/exec` and parsing its output, and SHALL treat this as the sole source of a file's acoustic identity.

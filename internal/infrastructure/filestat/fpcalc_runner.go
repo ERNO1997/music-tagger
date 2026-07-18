@@ -74,7 +74,7 @@ func (r *FpcalcRunner) Fingerprint(ctx context.Context, path string) (domain.Fin
 
 func isSupportedExtension(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
-	case ".mp3", ".flac":
+	case ".mp3", ".flac", ".m4a":
 		return true
 	default:
 		return false

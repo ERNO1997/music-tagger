@@ -7,9 +7,16 @@ services:
     environment:
       MUSIC_DIR: /music
       PORT: 8080
+      DB_PATH: /data/music-tagger.db
     volumes:
       # Host path to your real music library. Override via .env
       # (MUSIC_LIBRARY_PATH=/absolute/path/to/your/music) or:
       #   MUSIC_LIBRARY_PATH=/absolute/path docker compose up
       - ${MUSIC_LIBRARY_PATH:-./music}:/music
+      # Tracking database — kept separate from /music so nothing is ever
+      # written to the music library itself.
+      - music-tagger-data:/data
     restart: unless-stopped
+
+volumes:
+  music-tagger-data:

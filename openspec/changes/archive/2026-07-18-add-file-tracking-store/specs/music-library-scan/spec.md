@@ -1,8 +1,4 @@
-## Purpose
-
-Discovery, persistent tracking, and fingerprint reporting for the mounted local `/music` volume: recursively finding supported audio files, keeping a durable per-file record of their status (via the `file-tracking-store` capability), and surfacing that state through an API and a web listing page — with no external network calls, tagging, or file relocation.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Recursive discovery of audio files in the mounted volume
 The system SHALL recursively walk the configured `/music` directory and identify all files with `.mp3`, `.flac`, or `.m4a` extensions as candidate audio files, at any subdirectory depth.
@@ -44,6 +40,8 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 #### Scenario: Refresh trigger disabled while running
 - **WHEN** a refresh is currently running (whether started by this user, another tab, or automatically at server startup)
 - **THEN** the UI's refresh trigger control SHALL be disabled and SHALL display that a scan is in progress, re-enabling only once the refresh completes
+
+## ADDED Requirements
 
 ### Requirement: Asynchronous refresh action
 The system SHALL expose a `POST /api/v1/library/scan` endpoint that starts the disk walk, fingerprinting, and tracking-store update (per the `file-tracking-store` capability) in the background and returns immediately, rather than blocking for the duration of the refresh.

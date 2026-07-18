@@ -21,19 +21,27 @@
 - **Frontend**: Lightweight, dark-mode **Vanilla JS + Tailwind CSS** single-page interface — no frontend build toolchain (no Node/React/webpack). Served directly as static assets by the Go binary.
 - **Runtime**: Single Docker container bundling the Go binary alongside the native `fpcalc` and `ffmpeg` executables required for fingerprinting and audio inspection.
 
-### 1.3 Workflow 1 — Bulk Local Automation (Asynchronous)
+### 1.3 Workflow 1 — Bulk Local Automation & Tracking
 
-Triggered via the web UI or API against a Docker-mounted `/music` volume.
+Triggered via the web UI or API against a Docker-mounted `/music` volume. This workflow is split into two independently-triggerable phases so that MusicBrainz's rate limit (§4.2) is respected by construction rather than by careful pacing of a large batch job.
 
-1. **Scan**: Recursively walk the `/music` directory for supported audio files (`.mp3`, `.flac`).
+**Phase A — Discovery & Tracking (automatic on scan)**
+
+1. **Scan**: Recursively walk the `/music` directory for supported audio files (`.mp3`, `.flac`, `.m4a`).
 2. **Fingerprint**: For each file, invoke `fpcalc` to compute a Chromaprint acoustic fingerprint — never inferred from filename or existing (potentially incorrect) tags.
-3. **Identify**: Submit the fingerprint + duration to **AcoustID**, resolve the returned MusicBrainz Recording ID.
-4. **Enrich**: Query **MusicBrainz** for canonical artist/album/track/track-number data, **Cover Art Archive** for high-resolution artwork, and **Genius** for English lyrics.
-5. **Tag**: Write ID3v2 (MP3) or Vorbis Comment (FLAC) metadata, embed cover art (APIC / `PICTURE` block), and embed lyrics (USLT / `LYRICS` comment).
-6. **Relocate**: Physically move the tagged file into the canonical `Artist/Album/Track - Title` hierarchy on the same volume.
-7. **Report**: Progress and per-file outcomes are tracked against a `task_id` and pollable/streamable by the client.
+3. **Track**: Persist each file's path, fingerprint, and identification status (`new`, `identified`, `not_found`, `missing`) to a local embedded database (§2.4), so re-scanning only touches files that changed and previously-resolved files are never silently reprocessed.
 
-This workflow runs entirely in a background Goroutine, decoupled from the initiating HTTP request, and is rate-governed to respect upstream API constraints (see §4.2).
+**Phase B — Identification (on-demand, per file)**
+
+4. **Identify**: Triggered individually by the user from the web UI — not automatically as part of the scan. Submits the tracked file's fingerprint + duration to **AcoustID**, resolves the returned MusicBrainz Recording ID, then queries **MusicBrainz** for canonical artist/album/track/track-number data. The result updates that file's row in the tracking store.
+
+**Phase C — Enrichment, Tagging & Relocation (future)**
+
+5. **Enrich**: Query **Cover Art Archive** for high-resolution artwork and **Genius** for English lyrics, once a file is identified.
+6. **Tag**: Write ID3v2 (MP3), Vorbis Comment (FLAC), or MP4/iTunes-style atom (M4A) metadata, embed cover art (`APIC` / `PICTURE` block / `covr` atom), and embed lyrics (`USLT` / `LYRICS` comment / `©lyr` atom).
+7. **Relocate**: Physically move the tagged file into the canonical `Artist/Album/Track - Title` hierarchy on the same volume.
+
+Phase A runs as a background Goroutine — triggered automatically once at server startup and on demand from the UI — rather than inline with the HTTP request, so a large library's discovery/fingerprint/track pass never holds a connection open. Its trigger endpoint returns immediately and reports progress separately, distinct from (and simpler than) the `task_id` registry §5's `POST /api/v1/scan-local` contract reserves for the eventual full bulk-remediation pipeline. This is orthogonal to Phase B, which stays on-demand and human-paced regardless.
 
 ### 1.4 Workflow 2 — Real-time Upload (Synchronous)
 
@@ -59,9 +67,10 @@ All tagging is performed with **pure Go libraries** — CGO is disabled (`CGO_EN
 
 | Concern | Approach |
 |---|---|
-| Acoustic Fingerprinting | Native orchestration of the system binary `fpcalc` (Chromaprint) via `os/exec`. Go never re-implements fingerprinting logic; it shells out and parses stdout (JSON mode: `fpcalc -json`). |
+| Acoustic Fingerprinting | Native orchestration of the system binary `fpcalc` (Chromaprint) via `os/exec`. Go never re-implements fingerprinting logic; it shells out and parses stdout (JSON mode: `fpcalc -json`). `fpcalc` decodes via `ffmpeg`'s libraries, so `.mp3`, `.flac`, and `.m4a` are all supported without additional fingerprinting-side work. |
 | MP3 Tagging | Pure-Go ID3v2 library for text frames (`TIT2`, `TPE1`, `TALB`, `TRCK`, etc.), `USLT` (unsynchronized lyrics) frames, and `APIC` (attached picture) frames. |
 | FLAC Tagging | Pure-Go FLAC metadata library for Vorbis comment blocks (`TITLE`, `ARTIST`, `ALBUM`, `TRACKNUMBER`, `LYRICS`) and `PICTURE` metadata blocks. |
+| M4A/MP4 Tagging | Pure-Go MP4 atom library for iTunes-style metadata atoms (`©nam`, `©ART`, `©alb`, `trkn`), the `covr` atom for cover art, and the `©lyr` atom for lyrics. |
 
 ### 2.3 External API Gateways
 
@@ -72,7 +81,14 @@ All tagging is performed with **pure Go libraries** — CGO is disabled (`CGO_EN
 | **Cover Art Archive** | High-resolution front-cover artwork keyed by MusicBrainz Release ID | Public, unauthenticated |
 | **Genius** | English-language lyrics search and scraping/fetch | API-key gated |
 
-### 2.4 Containerization
+### 2.4 Persistence Layer
+
+- **Embedded database**: **SQLite**, accessed via a pure-Go driver (e.g. `modernc.org/sqlite`) to preserve the `CGO_ENABLED=0` static-binary constraint (§2.2).
+- **Purpose**: Track every file discovered under the mounted `/music` volume — path, fingerprint, size/mtime, and identification status (`new`, `identified`, `not_found`, `missing`) — so the web UI can distinguish untouched files from previously-identified ones, and identification (§1.3 Phase B) can be triggered on demand per file rather than automatically across an entire scan.
+- **Location**: A single SQLite file stored on its own Docker volume (not the `/music` mount itself), so tracking state survives container restarts independently of the music library.
+- **Scope**: This store tracks *identification/tagging status*, not a full mirror of canonical metadata — resolved artist/album/track data is sourced fresh from MusicBrainz on each identification call, though caching resolved metadata alongside the status row is a reasonable future optimization to be scoped in the change that introduces this store.
+
+### 2.5 Containerization
 
 - **Multi-stage Dockerfile**:
   - **Stage 1 (builder)**: `golang:1.22-bookworm` — compiles the application via `CGO_ENABLED=0 GOOS=linux go build` into a single static binary.
@@ -101,9 +117,10 @@ music-tagger/
 │   │   └── errors.go                #   Domain-level sentinel/typed errors
 │   │
 │   ├── usecases/                    # Application business rules — orchestrators
-│   │   ├── scan_local_volume.go     #   ScanLocalVolume: walk, rate-pace, fingerprint, tag, relocate
+│   │   ├── scan_local_volume.go     #   ScanLocalVolume: walk, fingerprint, persist tracking rows
+│   │   ├── identify_file.go         #   IdentifyFile: on-demand AcoustID/MusicBrainz lookup for one file
 │   │   ├── process_web_upload.go    #   ProcessWebUpload: in-memory pipeline, returns tagged bytes
-│   │   ├── ports.go                 #   Interfaces: Fingerprinter, MetadataGateway, Tagger, Relocator
+│   │   ├── ports.go                 #   Interfaces: Fingerprinter, MetadataGateway, Tagger, Relocator, TrackingStore
 │   │   └── taskmanager.go           #   In-memory task_id registry + status tracking
 │   │
 │   ├── infrastructure/               # Frameworks & drivers — implements usecases ports
@@ -111,21 +128,26 @@ music-tagger/
 │   │   │   └── v1/
 │   │   │       ├── router.go        #   Fiber/Echo route registration
 │   │   │       ├── scan_handler.go  #   POST /api/v1/scan-local controller
+│   │   │       ├── identify_handler.go#  On-demand per-file identification controller
 │   │   │       ├── upload_handler.go#   POST /api/v1/upload-file controller
 │   │   │       ├── dto.go           #   Request/response DTOs (OpenAPI-aligned)
 │   │   │       └── openapi.yaml     #   Embedded OpenAPI 3.0.3 contract (see §5)
 │   │   │
 │   │   ├── gateways/
 │   │   │   ├── acoustid_client.go   #   AcoustID HTTP client
-│   │   │   ├── musicbrainz_client.go#   MusicBrainz HTTP client (rate-limit aware)
+│   │   │   ├── musicbrainz_client.go#   MusicBrainz HTTP client (centralized rate-limit gate, §4.2)
 │   │   │   ├── coverart_client.go   #   Cover Art Archive HTTP client
 │   │   │   └── genius_client.go     #   Genius HTTP client / lyrics scraper
 │   │   │
-│   │   └── filestat/
-│   │       ├── fpcalc_runner.go     #   os/exec wrapper invoking `fpcalc -json`
-│   │       ├── id3_tagger.go        #   Pure-Go MP3 ID3v2/USLT/APIC read-write wrapper
-│   │       ├── flac_tagger.go       #   Pure-Go FLAC Vorbis-comment/PICTURE read-write wrapper
-│   │       └── path_sanitizer.go    #   Filesystem-safe path construction (§4.3)
+│   │   ├── filestat/
+│   │   │   ├── fpcalc_runner.go     #   os/exec wrapper invoking `fpcalc -json`
+│   │   │   ├── id3_tagger.go        #   Pure-Go MP3 ID3v2/USLT/APIC read-write wrapper
+│   │   │   ├── flac_tagger.go       #   Pure-Go FLAC Vorbis-comment/PICTURE read-write wrapper
+│   │   │   ├── mp4_tagger.go        #   Pure-Go MP4 atom read-write wrapper (M4A: ©nam/©ART/©alb/trkn/covr/©lyr)
+│   │   │   └── path_sanitizer.go    #   Filesystem-safe path construction (§4.3)
+│   │   │
+│   │   └── persistence/
+│   │       └── sqlite_store.go      #   SQLite-backed TrackingStore (§2.4): file path, fingerprint, status
 │   │
 │   └── config/
 │       └── config.go                 # Environment-driven configuration (API keys, paths, port)
@@ -165,16 +187,17 @@ Every file entering either workflow **must** have its physical acoustic fingerpr
 
 > MusicBrainz enforces a strict **1 request/second** ceiling per client. Violation risks IP-level banning.
 
-- All MusicBrainz calls originating from **Workflow 1 (bulk scan)** must be issued from a single background Goroutine executing a **timed pacing loop**:
+- The limit is enforced **once, centrally, inside the MusicBrainz gateway** (`internal/infrastructure/gateways/musicbrainz_client.go`) via a shared minimum-interval gate keyed on the timestamp of the last request — every caller is paced identically regardless of who's asking. This rule is enforced by the gateway itself, not reimplemented by each caller.
+- **On-demand, per-file identification** (§1.3 Phase B, triggered from the web UI) issues one request at a time by construction; the gateway-level gate is the hard backstop against rapid repeated clicks or any future bulk-trigger UI, not the primary pacing mechanism.
+- Should a future bulk/background scan mode be introduced (see §5's reserved `POST /api/v1/scan-local` contract), it must call MusicBrainz serially through the same gateway:
   ```go
   for _, file := range files {
-      result, err := mbClient.Lookup(ctx, file.Fingerprint)
+      result, err := mbClient.Lookup(ctx, file.Fingerprint) // rate gate enforced inside mbClient
       // ... handle result ...
-      time.Sleep(1 * time.Second)
   }
   ```
-- Concurrent/fan-out fetching against MusicBrainz is explicitly forbidden — the scan pipeline is intentionally serialized at the MusicBrainz gateway boundary, even if fingerprinting or tag-writing stages are otherwise parallelized.
-- **Workflow 2 (single upload)** is exempt from sustained pacing concerns (one request per user action) but must still respect the same client-level throttle if issued in rapid succession.
+- Concurrent/fan-out fetching against MusicBrainz is explicitly forbidden — regardless of caller, requests are serialized at the gateway boundary.
+- **Workflow 2 (single upload)** goes through the same gateway and is therefore automatically covered by the same gate.
 
 ### 4.3 File Relocation & Path Sanitization Rule
 
@@ -260,7 +283,7 @@ paths:
         - Interactive Upload
       summary: Upload a single audio file for synchronous tagging and streamed download
       description: >
-        Accepts a single MP3 or FLAC file via multipart/form-data. The file is
+        Accepts a single MP3, FLAC, or M4A file via multipart/form-data. The file is
         fingerprinted, identified, enriched with metadata/cover art/lyrics, and
         tagged in-place in a temp buffer. The corrected binary is streamed back
         in the response body with the matching audio Content-Type. No file is
@@ -278,7 +301,7 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: A single .mp3 or .flac audio file
+                  description: A single .mp3, .flac, or .m4a audio file
       responses:
         '200':
           description: Successfully tagged audio file streamed back to the client
@@ -288,6 +311,10 @@ paths:
                 type: string
                 format: binary
             audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/mp4:
               schema:
                 type: string
                 format: binary
@@ -376,4 +403,4 @@ To keep the system's scope well-bounded, the following are explicitly **out of s
 - Multi-user authentication/authorization (single-operator, trusted-network deployment assumed).
 - Non-English lyrics sourcing (Genius integration is English-only by design).
 - Audio transcoding or format conversion (`ffmpeg` is bundled solely for auxiliary audio inspection, not format conversion, in v1).
-- Persistent database storage of task history — task state is in-memory and scoped to the process lifetime.
+- Persistent storage of background *task run* history — the `task_id`/status registry (§3, `taskmanager.go`) remains in-memory and scoped to the process lifetime. This is distinct from the SQLite-backed file-tracking store (§2.4), which persists file identification state across restarts by design.
