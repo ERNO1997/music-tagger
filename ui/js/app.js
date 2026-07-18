@@ -3,6 +3,30 @@ const rowsEl = document.getElementById('library-rows');
 const refreshButton = document.getElementById('refresh-button');
 const identifyButton = document.getElementById('identify-button');
 const selectAllCheckbox = document.getElementById('select-all');
+const detailsOverlay = document.getElementById('details-overlay');
+const detailsFields = document.getElementById('details-fields');
+const detailsClose = document.getElementById('details-close');
+
+const DETAILS_FIELD_LABELS = [
+  ['path', 'Path'],
+  ['format', 'Format'],
+  ['duration_seconds', 'Duration', formatDuration],
+  ['fingerprint', 'Fingerprint'],
+  ['status', 'Status', (v) => STATUS_LABELS[v] || v],
+  ['error', 'Error'],
+  ['artist', 'Artist'],
+  ['album_artist', 'Album Artist'],
+  ['title', 'Title'],
+  ['track_number', 'Track Number'],
+  ['disc_number', 'Disc Number'],
+  ['total_discs', 'Total Discs'],
+  ['total_tracks', 'Total Tracks'],
+  ['year', 'Year'],
+  ['recording_mbid', 'Recording MBID'],
+  ['release_mbid', 'Release MBID'],
+  ['release_group_mbid', 'Release-Group MBID'],
+  ['artist_mbid', 'Artist MBID'],
+];
 
 const STATUS_LABELS = {
   new: 'New',
@@ -22,6 +46,7 @@ const selectedPaths = new Set();
 let scanPollTimer = null;
 let identifyPollTimer = null;
 let identifyRunning = false;
+let lastEntries = [];
 
 async function loadLibrary() {
   try {
@@ -38,6 +63,8 @@ async function loadLibrary() {
 }
 
 function renderTable(entries) {
+  lastEntries = entries;
+
   const knownPaths = new Set(entries.map((e) => e.path));
   for (const path of [...selectedPaths]) {
     if (!knownPaths.has(path)) {
@@ -65,6 +92,8 @@ function renderTable(entries) {
 
 function renderRow(entry) {
   const row = document.createElement('tr');
+  row.dataset.path = entry.path;
+  row.classList.add('cursor-pointer', 'hover:bg-neutral-900');
   const statusLabel = STATUS_LABELS[entry.status] || entry.status;
   const statusClass = STATUS_CLASSES[entry.status] || '';
   const checked = selectedPaths.has(entry.path) ? 'checked' : '';
@@ -72,7 +101,7 @@ function renderRow(entry) {
   const metadataCell = renderMetadataCell(entry);
 
   if (entry.error) {
-    row.className = 'text-red-400';
+    row.classList.add('text-red-400');
     row.innerHTML = `
       ${checkboxCell}
       <td class="px-4 py-3 font-mono text-xs">${escapeHtml(entry.path)}</td>
@@ -129,6 +158,55 @@ rowsEl.addEventListener('change', (e) => {
     selectedPaths.delete(path);
   }
   updateIdentifyButton();
+});
+
+rowsEl.addEventListener('click', (e) => {
+  // Clicking the selection checkbox (or anything inside it) only toggles
+  // selection — it must not also open the details view.
+  if (e.target.closest('input')) {
+    return;
+  }
+  const row = e.target.closest('tr');
+  if (!row) {
+    return;
+  }
+  openDetails(row.dataset.path);
+});
+
+function openDetails(path) {
+  const entry = lastEntries.find((e) => e.path === path);
+  if (!entry) {
+    return;
+  }
+
+  detailsFields.innerHTML = '';
+  for (const [key, label, formatter] of DETAILS_FIELD_LABELS) {
+    const value = entry[key];
+    if (value === undefined || value === null || value === '') {
+      continue;
+    }
+    const displayValue = formatter ? formatter(value) : value;
+    const row = document.createElement('div');
+    row.className = 'flex justify-between gap-4';
+    row.innerHTML = `
+      <dt class="text-neutral-400">${escapeHtml(label)}</dt>
+      <dd class="font-mono text-xs text-right break-all">${escapeHtml(String(displayValue))}</dd>
+    `;
+    detailsFields.appendChild(row);
+  }
+
+  detailsOverlay.classList.remove('hidden');
+}
+
+function closeDetails() {
+  detailsOverlay.classList.add('hidden');
+}
+
+detailsClose.addEventListener('click', closeDetails);
+detailsOverlay.addEventListener('click', (e) => {
+  if (e.target === detailsOverlay) {
+    closeDetails();
+  }
 });
 
 selectAllCheckbox.addEventListener('change', () => {

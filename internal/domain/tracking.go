@@ -32,6 +32,17 @@ type FileRecord struct {
 	Title         string
 	TrackNumber   int
 	RecordingMBID string
+
+	// Extended resolved metadata, also populated only once identified.
+	// Year is 0 when the release had no usable date.
+	AlbumArtist     string
+	Year            int
+	DiscNumber      int
+	TotalDiscs      int
+	TotalTracks     int
+	ReleaseMBID     string
+	ReleaseGroupMBID string
+	ArtistMBID      string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

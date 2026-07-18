@@ -69,6 +69,18 @@ type RecordingMetadata struct {
 	Album       string
 	Title       string
 	TrackNumber int
+
+	// Extended fields, all derived from the same recording lookup — no
+	// additional MusicBrainz request. Year/DiscNumber/TotalDiscs/
+	// TotalTracks are 0 when not derivable (e.g. no usable release date).
+	AlbumArtist      string
+	Year             int
+	DiscNumber       int
+	TotalDiscs       int
+	TotalTracks      int
+	ReleaseMBID      string
+	ReleaseGroupMBID string
+	ArtistMBID       string
 }
 
 // MusicBrainzLookup resolves a MusicBrainz Recording ID to canonical

@@ -19,6 +19,16 @@ type LibraryEntry struct {
 	Album           string  `json:"album,omitempty"`
 	Title           string  `json:"title,omitempty"`
 	TrackNumber     int     `json:"track_number,omitempty"`
+	RecordingMBID   string  `json:"recording_mbid,omitempty"`
+
+	AlbumArtist      string `json:"album_artist,omitempty"`
+	Year             int    `json:"year,omitempty"`
+	DiscNumber       int    `json:"disc_number,omitempty"`
+	TotalDiscs       int    `json:"total_discs,omitempty"`
+	TotalTracks      int    `json:"total_tracks,omitempty"`
+	ReleaseMBID      string `json:"release_mbid,omitempty"`
+	ReleaseGroupMBID string `json:"release_group_mbid,omitempty"`
+	ArtistMBID       string `json:"artist_mbid,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -50,6 +60,16 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 			Album:           r.Album,
 			Title:           r.Title,
 			TrackNumber:     r.TrackNumber,
+			RecordingMBID:   r.RecordingMBID,
+
+			AlbumArtist:      r.AlbumArtist,
+			Year:             r.Year,
+			DiscNumber:       r.DiscNumber,
+			TotalDiscs:       r.TotalDiscs,
+			TotalTracks:      r.TotalTracks,
+			ReleaseMBID:      r.ReleaseMBID,
+			ReleaseGroupMBID: r.ReleaseGroupMBID,
+			ArtistMBID:       r.ArtistMBID,
 		})
 	}
 

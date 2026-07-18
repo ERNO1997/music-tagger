@@ -86,6 +86,14 @@ var columnMigrations = []struct {
 	{"title", "TEXT NOT NULL DEFAULT ''"},
 	{"track_number", "INTEGER NOT NULL DEFAULT 0"},
 	{"recording_mbid", "TEXT NOT NULL DEFAULT ''"},
+	{"album_artist", "TEXT NOT NULL DEFAULT ''"},
+	{"year", "INTEGER NOT NULL DEFAULT 0"},
+	{"disc_number", "INTEGER NOT NULL DEFAULT 0"},
+	{"total_discs", "INTEGER NOT NULL DEFAULT 0"},
+	{"total_tracks", "INTEGER NOT NULL DEFAULT 0"},
+	{"release_mbid", "TEXT NOT NULL DEFAULT ''"},
+	{"release_group_mbid", "TEXT NOT NULL DEFAULT ''"},
+	{"artist_mbid", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrateColumns(ctx context.Context, db *sql.DB) error {
@@ -136,7 +144,8 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
-		       artist, album, title, track_number, recording_mbid
+		       artist, album, title, track_number, recording_mbid,
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid
 		FROM files
 	`)
 	if err != nil {
@@ -150,7 +159,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		var format, status string
 		var missing int
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
-			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID); err != nil {
+			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
+			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
@@ -175,13 +185,14 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 	now := time.Now().Unix()
 
 	if len(apply.Upserts) > 0 {
-		// Resolved metadata (artist/album/title/track_number/recording_mbid)
-		// is always reset to blank here — every Upserts entry is a brand
-		// new or content-changed file, so any prior identification is
-		// stale and must not linger against different content.
+		// Resolved metadata (artist/album/title/track_number/recording_mbid
+		// and the extended fields below) is always reset to blank here —
+		// every Upserts entry is a brand new or content-changed file, so
+		// any prior identification is stale and must not linger against
+		// different content.
 		upsertStmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', ?)
+			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', '', 0, 0, 0, 0, '', '', '', ?)
 			ON CONFLICT(path) DO UPDATE SET
 				format = excluded.format,
 				fingerprint = excluded.fingerprint,
@@ -196,6 +207,14 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 				title = '',
 				track_number = 0,
 				recording_mbid = '',
+				album_artist = '',
+				year = 0,
+				disc_number = 0,
+				total_discs = 0,
+				total_tracks = 0,
+				release_mbid = '',
+				release_group_mbid = '',
+				artist_mbid = '',
 				updated_at = excluded.updated_at
 		`)
 		if err != nil {
@@ -261,10 +280,22 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 				title = ?,
 				track_number = ?,
 				recording_mbid = ?,
+				album_artist = ?,
+				year = ?,
+				disc_number = ?,
+				total_discs = ?,
+				total_tracks = ?,
+				release_mbid = ?,
+				release_group_mbid = ?,
+				artist_mbid = ?,
 				updated_at = ?
 			WHERE path = ?
 		`, string(result.Status), result.Metadata.Artist, result.Metadata.Album, result.Metadata.Title,
-			result.Metadata.TrackNumber, result.Metadata.RecordingID, now, path)
+			result.Metadata.TrackNumber, result.Metadata.RecordingID,
+			result.Metadata.AlbumArtist, result.Metadata.Year, result.Metadata.DiscNumber,
+			result.Metadata.TotalDiscs, result.Metadata.TotalTracks,
+			result.Metadata.ReleaseMBID, result.Metadata.ReleaseGroupMBID, result.Metadata.ArtistMBID,
+			now, path)
 		if err != nil {
 			return fmt.Errorf("recording identification for %s: %w", path, err)
 		}

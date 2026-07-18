@@ -43,23 +43,34 @@ type mbRecording struct {
 }
 
 type mbArtistCredit struct {
-	Name       string `json:"name"`
-	JoinPhrase string `json:"joinphrase"`
+	Name       string   `json:"name"`
+	JoinPhrase string   `json:"joinphrase"`
+	Artist     mbArtist `json:"artist"`
+}
+
+type mbArtist struct {
+	ID string `json:"id"`
 }
 
 type mbRelease struct {
-	Title        string          `json:"title"`
-	Status       string          `json:"status"`
-	ReleaseGroup *mbReleaseGroup `json:"release-group"`
-	Media        []mbMedium      `json:"media"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Status       string           `json:"status"`
+	Date         string           `json:"date"`
+	ArtistCredit []mbArtistCredit `json:"artist-credit"`
+	ReleaseGroup *mbReleaseGroup  `json:"release-group"`
+	Media        []mbMedium       `json:"media"`
 }
 
 type mbReleaseGroup struct {
+	ID          string `json:"id"`
 	PrimaryType string `json:"primary-type"`
 }
 
 type mbMedium struct {
-	Tracks []mbTrack `json:"tracks"`
+	Position   int       `json:"position"`
+	TrackCount int       `json:"track-count"`
+	Tracks     []mbTrack `json:"tracks"`
 }
 
 type mbTrack struct {
@@ -96,52 +107,92 @@ func (c *MusicBrainzClient) Lookup(ctx context.Context, recordingID string) (use
 		return usecases.RecordingMetadata{}, fmt.Errorf("decoding MusicBrainz response: %w", err)
 	}
 
-	release, track, ok := selectRelease(rec.Releases)
+	release, medium, track, ok := selectRelease(rec.Releases)
 	if !ok {
 		return usecases.RecordingMetadata{}, domain.ErrNoMusicBrainzRelease
 	}
 
+	var releaseGroupID string
+	if release.ReleaseGroup != nil {
+		releaseGroupID = release.ReleaseGroup.ID
+	}
+
 	return usecases.RecordingMetadata{
-		RecordingID: recordingID,
-		Artist:      joinArtistCredit(rec.ArtistCredit),
-		Album:       release.Title,
-		Title:       rec.Title,
-		TrackNumber: trackNumber(track),
+		RecordingID:      recordingID,
+		Artist:           joinArtistCredit(rec.ArtistCredit),
+		Album:            release.Title,
+		Title:            rec.Title,
+		TrackNumber:      trackNumber(track),
+		AlbumArtist:      joinArtistCredit(release.ArtistCredit),
+		Year:             parseYear(release.Date),
+		DiscNumber:       medium.Position,
+		TotalDiscs:       len(release.Media),
+		TotalTracks:      medium.TrackCount,
+		ReleaseMBID:      release.ID,
+		ReleaseGroupMBID: releaseGroupID,
+		ArtistMBID:       firstArtistID(rec.ArtistCredit),
 	}, nil
 }
 
 // selectRelease prefers a release whose release-group primary type is
 // "Album" and status is "Official", falling back to the first release
 // with at least one track, per design.md's release-selection heuristic.
-func selectRelease(releases []mbRelease) (mbRelease, mbTrack, bool) {
+// It returns the medium alongside the release and track because disc
+// number and total-tracks-on-that-disc are medium-level fields, while
+// total-discs is len(release.Media) computed by the caller.
+func selectRelease(releases []mbRelease) (mbRelease, mbMedium, mbTrack, bool) {
 	var fallbackRelease mbRelease
+	var fallbackMedium mbMedium
 	var fallbackTrack mbTrack
 	haveFallback := false
 
 	for _, release := range releases {
-		track, ok := firstTrack(release)
+		medium, track, ok := firstTrack(release)
 		if !ok {
 			continue
 		}
 		if !haveFallback {
-			fallbackRelease, fallbackTrack, haveFallback = release, track, true
+			fallbackRelease, fallbackMedium, fallbackTrack, haveFallback = release, medium, track, true
 		}
 		isAlbum := release.ReleaseGroup != nil && release.ReleaseGroup.PrimaryType == "Album"
 		if isAlbum && release.Status == "Official" {
-			return release, track, true
+			return release, medium, track, true
 		}
 	}
 
-	return fallbackRelease, fallbackTrack, haveFallback
+	return fallbackRelease, fallbackMedium, fallbackTrack, haveFallback
 }
 
-func firstTrack(release mbRelease) (mbTrack, bool) {
+func firstTrack(release mbRelease) (mbMedium, mbTrack, bool) {
 	for _, medium := range release.Media {
 		if len(medium.Tracks) > 0 {
-			return medium.Tracks[0], true
+			return medium, medium.Tracks[0], true
 		}
 	}
-	return mbTrack{}, false
+	return mbMedium{}, mbTrack{}, false
+}
+
+// parseYear extracts the year from a MusicBrainz date string, which may be
+// "YYYY", "YYYY-MM", or "YYYY-MM-DD". Returns 0 if empty or unparseable —
+// a missing/partial date is common enough in MusicBrainz data that this
+// must be a soft failure, not an error.
+func parseYear(date string) int {
+	if len(date) < 4 {
+		return 0
+	}
+	year, err := strconv.Atoi(date[:4])
+	if err != nil {
+		return 0
+	}
+	return year
+}
+
+// firstArtistID returns the first artist credit's MBID, or "" if none.
+func firstArtistID(credits []mbArtistCredit) string {
+	if len(credits) == 0 {
+		return ""
+	}
+	return credits[0].Artist.ID
 }
 
 func trackNumber(track mbTrack) int {

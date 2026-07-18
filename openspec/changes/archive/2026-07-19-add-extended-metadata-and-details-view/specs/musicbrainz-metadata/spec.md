@@ -1,8 +1,4 @@
-## Purpose
-
-Resolving a MusicBrainz Recording ID (found via the `acoustid-lookup` capability) to canonical artist/release/track/track-number data — plus extended metadata (album artist, release year, disc/track counts, and MBIDs) derived from the same lookup — with the 1 request/second MusicBrainz rate limit enforced centrally regardless of caller.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Recording metadata resolution
 Given a MusicBrainz Recording ID, the system SHALL resolve the canonical artist, release (album) title, track title, track number, album artist, release year, disc number, total discs, total tracks, release MBID, release-group MBID, and artist MBID by querying the MusicBrainz recording endpoint with associated releases and artist credits.
@@ -27,16 +23,7 @@ Given a MusicBrainz Recording ID, the system SHALL resolve the canonical artist,
 - **WHEN** the MusicBrainz request fails (network error, non-2xx response, or malformed response)
 - **THEN** the system SHALL return an error, and SHALL NOT treat the failure as "no releases found"
 
-### Requirement: Centralized MusicBrainz rate limiting
-The system SHALL enforce a minimum 1-second interval between requests to MusicBrainz, applied once inside the client itself, regardless of which caller issues the request.
-
-#### Scenario: Two requests issued within the same second
-- **WHEN** two calls to the MusicBrainz client are made less than 1 second apart, from the same or different callers
-- **THEN** the second request SHALL be delayed until at least 1 second has elapsed since the first
-
-#### Scenario: No concurrent fan-out to MusicBrainz
-- **WHEN** multiple callers issue MusicBrainz requests concurrently
-- **THEN** the requests SHALL be serialized through the shared rate gate rather than issued in parallel
+## ADDED Requirements
 
 ### Requirement: No additional MusicBrainz requests for extended metadata
 The system SHALL derive album artist, release year, disc number, total discs, total tracks, and the release/release-group/artist MBIDs from the same recording lookup response used for existing metadata resolution, without issuing any additional MusicBrainz request.
