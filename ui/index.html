@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Music Tagger — Library</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class' }
+  </script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="bg-neutral-950 text-neutral-100 min-h-screen">
+  <div class="max-w-5xl mx-auto p-6">
+    <h1 class="text-2xl font-semibold mb-1">Music Tagger</h1>
+    <p class="text-neutral-400 mb-6">Local library scan — fingerprints only, no metadata lookups yet.</p>
+
+    <div id="status" class="text-neutral-400 mb-4">Scanning /music…</div>
+
+    <div class="overflow-x-auto rounded-lg border border-neutral-800">
+      <table class="w-full text-sm text-left">
+        <thead class="bg-neutral-900 text-neutral-400 uppercase text-xs">
+          <tr>
+            <th class="px-4 py-3">Path</th>
+            <th class="px-4 py-3">Format</th>
+            <th class="px-4 py-3">Duration</th>
+            <th class="px-4 py-3">Fingerprint</th>
+          </tr>
+        </thead>
+        <tbody id="library-rows" class="divide-y divide-neutral-800"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>

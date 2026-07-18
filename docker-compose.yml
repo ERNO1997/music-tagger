@@ -1,0 +1,15 @@
+services:
+  music-tagger:
+    build: .
+    container_name: music-tagger
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      MUSIC_DIR: /music
+      PORT: 8080
+    volumes:
+      # Host path to your real music library. Override via .env
+      # (MUSIC_LIBRARY_PATH=/absolute/path/to/your/music) or:
+      #   MUSIC_LIBRARY_PATH=/absolute/path docker compose up
+      - ${MUSIC_LIBRARY_PATH:-./music}:/music
+    restart: unless-stopped
