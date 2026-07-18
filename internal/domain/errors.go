@@ -15,4 +15,16 @@ var (
 	// produce a usable fingerprint for a file (non-zero exit or
 	// unparseable output).
 	ErrFingerprintFailed = errors.New("fingerprint computation failed")
+
+	// ErrAcoustIDNotConfigured is returned when an AcoustID lookup is
+	// attempted without an API key configured.
+	ErrAcoustIDNotConfigured = errors.New("ACOUSTID_API_KEY not configured")
+
+	// ErrMusicBrainzNotConfigured is returned when a MusicBrainz lookup is
+	// attempted without a User-Agent configured.
+	ErrMusicBrainzNotConfigured = errors.New("MUSICBRAINZ_USER_AGENT not configured")
+
+	// ErrNoMusicBrainzRelease is returned when a MusicBrainz recording
+	// resolves but has no associated releases to derive metadata from.
+	ErrNoMusicBrainzRelease = errors.New("no MusicBrainz release found for recording")
 )

@@ -1,36 +1,22 @@
 package usecases
 
-import (
-	"context"
-	"errors"
-	"sync"
-	"time"
-)
+import "context"
 
 // ErrRefreshInProgress is returned by RefreshManager.Start when a refresh is
 // already running.
-var ErrRefreshInProgress = errors.New("refresh already in progress")
+var ErrRefreshInProgress = ErrJobInProgress
 
 // RefreshStatus is a snapshot of the current/most recent refresh state.
-type RefreshStatus struct {
-	Running   bool
-	Processed int
-	Total     int
-}
+type RefreshStatus = JobStatus
 
 // RefreshManager coordinates a single background ScanLocalVolume.Refresh at
-// a time and exposes its live progress for polling. Only one refresh may
-// run at once; a concurrent trigger is rejected rather than queued or
-// fanned out.
+// a time and exposes its live progress for polling, via the shared
+// JobManager. Only one refresh may run at once; a concurrent trigger is
+// rejected rather than queued or fanned out.
 type RefreshManager struct {
 	scanner *ScanLocalVolume
 	root    string
-
-	mu        sync.Mutex
-	running   bool
-	processed int
-	total     int
-	startedAt time.Time
+	job     JobManager
 }
 
 func NewRefreshManager(scanner *ScanLocalVolume, root string) *RefreshManager {
@@ -38,42 +24,14 @@ func NewRefreshManager(scanner *ScanLocalVolume, root string) *RefreshManager {
 }
 
 // Start begins a refresh in the background if none is currently running.
-// It returns ErrRefreshInProgress otherwise. The refresh runs decoupled
-// from any caller's request context (using context.Background()) since it
-// must keep running after the triggering HTTP request/response completes.
+// It returns ErrRefreshInProgress otherwise.
 func (m *RefreshManager) Start() error {
-	m.mu.Lock()
-	if m.running {
-		m.mu.Unlock()
-		return ErrRefreshInProgress
-	}
-	m.running = true
-	m.processed = 0
-	m.total = 0
-	m.startedAt = time.Now()
-	m.mu.Unlock()
-
-	go func() {
-		defer func() {
-			m.mu.Lock()
-			m.running = false
-			m.mu.Unlock()
-		}()
-
-		_, _ = m.scanner.Refresh(context.Background(), m.root, func(processed, total int) {
-			m.mu.Lock()
-			m.processed = processed
-			m.total = total
-			m.mu.Unlock()
-		})
-	}()
-
-	return nil
+	return m.job.Start(func(report func(processed, total int)) {
+		_, _ = m.scanner.Refresh(context.Background(), m.root, report)
+	})
 }
 
 // Status returns a snapshot of the current/most recent refresh.
 func (m *RefreshManager) Status() RefreshStatus {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return RefreshStatus{Running: m.running, Processed: m.processed, Total: m.total}
+	return m.job.Status()
 }

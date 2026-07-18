@@ -24,6 +24,11 @@ type TrackingStore interface {
 	// transaction: new/changed file upserts, paths to mark missing, and
 	// previously-missing paths that reappeared unchanged.
 	BulkApply(ctx context.Context, apply BulkApply) error
+
+	// RecordIdentification updates one file's status and (when identified)
+	// resolved metadata in a single commit, without altering its
+	// fingerprint, size, or modification time.
+	RecordIdentification(ctx context.Context, path string, result IdentificationResult) error
 }
 
 // BulkApply is the batched result of one refresh pass.
@@ -40,4 +45,41 @@ type BulkApply struct {
 	// again unchanged; their Missing flag is cleared, restoring their
 	// prior Status without altering it.
 	ReappearedPaths []string
+}
+
+// AcoustIDMatch is one candidate MusicBrainz recording resolved from a
+// fingerprint, ranked by match confidence.
+type AcoustIDMatch struct {
+	RecordingID string
+	Score       float64
+}
+
+// AcoustIDLookup resolves a fingerprint + duration to candidate MusicBrainz
+// Recording IDs. An empty, nil-error result means AcoustID found no match —
+// distinct from a returned error, which means the lookup itself failed.
+type AcoustIDLookup interface {
+	Lookup(ctx context.Context, fingerprint string, durationSeconds float64) ([]AcoustIDMatch, error)
+}
+
+// RecordingMetadata is the canonical metadata MusicBrainz resolves for a
+// given Recording ID.
+type RecordingMetadata struct {
+	RecordingID string
+	Artist      string
+	Album       string
+	Title       string
+	TrackNumber int
+}
+
+// MusicBrainzLookup resolves a MusicBrainz Recording ID to canonical
+// artist/release/track data. Implementations must enforce the 1 req/sec
+// rate limit centrally, regardless of caller.
+type MusicBrainzLookup interface {
+	Lookup(ctx context.Context, recordingID string) (RecordingMetadata, error)
+}
+
+// IdentificationResult is the outcome of attempting to identify one file.
+type IdentificationResult struct {
+	Status   domain.TrackingStatus // StatusIdentified or StatusNotFound
+	Metadata RecordingMetadata     // populated only when Status is StatusIdentified
 }

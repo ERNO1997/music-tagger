@@ -14,12 +14,19 @@
   <div class="max-w-5xl mx-auto p-6">
     <div class="flex items-start justify-between gap-4 mb-1">
       <h1 class="text-2xl font-semibold">Music Tagger</h1>
-      <button
-        id="refresh-button"
-        class="shrink-0 rounded-md bg-neutral-100 text-neutral-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-      >Refresh</button>
+      <div class="flex gap-2 shrink-0">
+        <button
+          id="identify-button"
+          class="rounded-md bg-blue-600 text-white text-sm font-medium px-4 py-2 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+        >Identify Selected</button>
+        <button
+          id="refresh-button"
+          class="rounded-md bg-neutral-100 text-neutral-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+        >Refresh</button>
+      </div>
     </div>
-    <p class="text-neutral-400 mb-6">Local library tracking — fingerprints only, no metadata lookups yet.</p>
+    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify via AcoustID/MusicBrainz.</p>
 
     <div id="status" class="text-neutral-400 mb-4">Loading tracked files…</div>
 
@@ -27,11 +34,13 @@
       <table class="w-full text-sm text-left">
         <thead class="bg-neutral-900 text-neutral-400 uppercase text-xs">
           <tr>
+            <th class="px-4 py-3"><input type="checkbox" id="select-all" /></th>
             <th class="px-4 py-3">Path</th>
             <th class="px-4 py-3">Format</th>
             <th class="px-4 py-3">Duration</th>
             <th class="px-4 py-3">Fingerprint</th>
             <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Artist / Album / Title / Track</th>
           </tr>
         </thead>
         <tbody id="library-rows" class="divide-y divide-neutral-800"></tbody>

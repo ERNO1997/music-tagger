@@ -15,6 +15,10 @@ type LibraryEntry struct {
 	Fingerprint     string  `json:"fingerprint"`
 	Status          string  `json:"status"`
 	Error           string  `json:"error,omitempty"`
+	Artist          string  `json:"artist,omitempty"`
+	Album           string  `json:"album,omitempty"`
+	Title           string  `json:"title,omitempty"`
+	TrackNumber     int     `json:"track_number,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -42,6 +46,10 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 			Fingerprint:     r.Fingerprint,
 			Status:          string(r.EffectiveStatus()),
 			Error:           r.FingerprintError,
+			Artist:          r.Artist,
+			Album:           r.Album,
+			Title:           r.Title,
+			TrackNumber:     r.TrackNumber,
 		})
 	}
 

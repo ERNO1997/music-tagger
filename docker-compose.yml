@@ -8,6 +8,10 @@ services:
       MUSIC_DIR: /music
       PORT: 8080
       DB_PATH: /data/music-tagger.db
+      # Required for identification (AcoustID -> MusicBrainz). Set both in
+      # .env; identification requests fail with a clear error if missing.
+      ACOUSTID_API_KEY: ${ACOUSTID_API_KEY:-}
+      MUSICBRAINZ_USER_AGENT: ${MUSICBRAINZ_USER_AGENT:-}
     volumes:
       # Host path to your real music library. Override via .env
       # (MUSIC_LIBRARY_PATH=/absolute/path/to/your/music) or:

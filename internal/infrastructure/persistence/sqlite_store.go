@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS files (
 	status            TEXT NOT NULL,
 	missing           INTEGER NOT NULL DEFAULT 0,
 	fingerprint_error TEXT NOT NULL DEFAULT '',
+	artist            TEXT NOT NULL DEFAULT '',
+	album             TEXT NOT NULL DEFAULT '',
+	title             TEXT NOT NULL DEFAULT '',
+	track_number      INTEGER NOT NULL DEFAULT 0,
+	recording_mbid    TEXT NOT NULL DEFAULT '',
 	updated_at        INTEGER NOT NULL
 );
 `
@@ -59,8 +64,69 @@ func NewSQLiteStore(ctx context.Context, dbPath string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("creating schema: %w", err)
 	}
+	if err := migrateColumns(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating schema: %w", err)
+	}
 
 	return &SQLiteStore{db: db}, nil
+}
+
+// columnMigrations lists columns added to `files` after its initial release,
+// for databases created before each column existed. CREATE TABLE IF NOT
+// EXISTS is a no-op against an already-existing table, so new columns must
+// be added explicitly — this makes that idempotent regardless of which
+// prior schema version a given database started from.
+var columnMigrations = []struct {
+	name       string
+	definition string
+}{
+	{"artist", "TEXT NOT NULL DEFAULT ''"},
+	{"album", "TEXT NOT NULL DEFAULT ''"},
+	{"title", "TEXT NOT NULL DEFAULT ''"},
+	{"track_number", "INTEGER NOT NULL DEFAULT 0"},
+	{"recording_mbid", "TEXT NOT NULL DEFAULT ''"},
+}
+
+func migrateColumns(ctx context.Context, db *sql.DB) error {
+	existing, err := existingColumns(ctx, db)
+	if err != nil {
+		return err
+	}
+
+	for _, col := range columnMigrations {
+		if existing[col.name] {
+			continue
+		}
+		stmt := fmt.Sprintf("ALTER TABLE files ADD COLUMN %s %s", col.name, col.definition)
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("adding column %s: %w", col.name, err)
+		}
+	}
+
+	return nil
+}
+
+func existingColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(files)")
+	if err != nil {
+		return nil, fmt.Errorf("reading table info: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, fmt.Errorf("scanning table info row: %w", err)
+		}
+		existing[name] = true
+	}
+	return existing, rows.Err()
 }
 
 func (s *SQLiteStore) Close() error {
@@ -69,7 +135,9 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error FROM files
+		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+		       artist, album, title, track_number, recording_mbid
+		FROM files
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("querying tracked files: %w", err)
@@ -81,7 +149,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		var rec domain.FileRecord
 		var format, status string
 		var missing int
-		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError); err != nil {
+		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
+			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
@@ -106,9 +175,13 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 	now := time.Now().Unix()
 
 	if len(apply.Upserts) > 0 {
+		// Resolved metadata (artist/album/title/track_number/recording_mbid)
+		// is always reset to blank here — every Upserts entry is a brand
+		// new or content-changed file, so any prior identification is
+		// stale and must not linger against different content.
 		upsertStmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', ?)
 			ON CONFLICT(path) DO UPDATE SET
 				format = excluded.format,
 				fingerprint = excluded.fingerprint,
@@ -118,6 +191,11 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 				status = excluded.status,
 				missing = 0,
 				fingerprint_error = excluded.fingerprint_error,
+				artist = '',
+				album = '',
+				title = '',
+				track_number = 0,
+				recording_mbid = '',
 				updated_at = excluded.updated_at
 		`)
 		if err != nil {
@@ -164,5 +242,38 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 		return fmt.Errorf("committing refresh: %w", err)
 	}
 
+	return nil
+}
+
+// RecordIdentification updates one file's status and, when identified, its
+// resolved metadata — committed immediately (not batched), since each
+// identify iteration is already paced to ~1 req/sec by the MusicBrainz rate
+// gate and a single commit is negligible next to that.
+func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, result usecases.IdentificationResult) error {
+	now := time.Now().Unix()
+
+	if result.Status == domain.StatusIdentified {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE files SET
+				status = ?,
+				artist = ?,
+				album = ?,
+				title = ?,
+				track_number = ?,
+				recording_mbid = ?,
+				updated_at = ?
+			WHERE path = ?
+		`, string(result.Status), result.Metadata.Artist, result.Metadata.Album, result.Metadata.Title,
+			result.Metadata.TrackNumber, result.Metadata.RecordingID, now, path)
+		if err != nil {
+			return fmt.Errorf("recording identification for %s: %w", path, err)
+		}
+		return nil
+	}
+
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, updated_at = ? WHERE path = ?`, string(result.Status), now, path)
+	if err != nil {
+		return fmt.Errorf("recording identification outcome for %s: %w", path, err)
+	}
 	return nil
 }

@@ -1,0 +1,40 @@
+## Context
+
+`file-tracking-store` and `music-library-scan` (archived under `openspec/changes/archive/2026-07-18-add-file-tracking-store/`) give every discovered file a durable row with a fingerprint and a status, but that status can only ever be `new` or `missing` today — nothing produces `identified` or `not_found`. This change adds the actual identification step: AcoustID resolves a fingerprint to a MusicBrainz Recording ID, then MusicBrainz resolves that ID to canonical artist/release/track data. Per `project.md` §4.2, MusicBrainz's 1 req/sec limit must be enforced centrally in the gateway regardless of caller; per the discussion that shaped this proposal, identification is user-triggered (single or bulk-selected) and runs as a background job with progress polling, not a blocking request — the same lesson already learned and applied to the scan refresh.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Resolve a tracked file's fingerprint to canonical artist/release/track/track-number via AcoustID → MusicBrainz.
+- Accept a list of paths (1 or many) and process them as a background job, so bulk selection doesn't block an HTTP request for the duration of N sequential, rate-limited lookups.
+- Enforce the MusicBrainz 1 req/sec limit once, centrally, inside the MusicBrainz gateway client — identical to how the pattern is already documented in `project.md` §4.2.
+- Reuse the "background job + running/processed/total + 409 on concurrent trigger" shape already proven by the scan refresh, without duplicating its concurrency logic verbatim.
+- Persist resolved metadata (artist, album, title, track number) on the same tracking-store row as the fingerprint/status.
+
+**Non-Goals:**
+- No cover art (Cover Art Archive) or lyrics (Genius) fetching — later changes.
+- No tagging, no file relocation — later changes.
+- No automatic/implicit identification during a scan refresh — identification is always an explicit selection.
+- No UI for choosing among multiple candidate releases when a recording appears on more than one — a heuristic picks one (see Decisions); manual override is a future enhancement.
+
+## Decisions
+
+- **Two-step resolution: AcoustID first, then a dedicated MusicBrainz recording lookup.** AcoustID's `lookup` endpoint (with `meta=recordings+releasegroups`) resolves fingerprint → Recording ID and can bundle basic recording/artist data, but doesn't reliably give a specific release's track number. So after taking the top-scored AcoustID match's Recording ID, the MusicBrainz client separately calls `GET /ws/2/recording/{mbid}?inc=releases+artist-credits` to get the releases (and each release's track position) that recording belongs to.
+- **Release selection heuristic**: when a recording appears on multiple releases (original album, compilations, reissues), prefer the first release with release-group primary type "Album" and status "Official"; if none qualifies, fall back to the first release returned. This is a pragmatic default, not a guarantee of "the right" release — acceptable for v1, revisit if it produces bad results in practice.
+- **Central MusicBrainz rate gate, no AcoustID throttle.** The MusicBrainz client holds a shared minimum-interval gate (mutex + "earliest next allowed time," blocking/sleeping as needed before every request) exactly as already established for the future bulk-scan case in `project.md` §4.2 — every caller, whether one on-demand click or a large bulk job, is paced identically. AcoustID is not subject to the same strict limit per its own terms and per `project.md`, so its client issues requests without an artificial delay.
+- **A shared `JobManager` (usecases-level), not two independent copies of the concurrency guard.** The scan refresh already has a mutex-guarded running/processed/total/startedAt guard (`RefreshManager`). Rather than hand-writing a second, nearly identical guard for identification, extract a small generic `JobManager` (`Start(work func(report func(processed, total int))) error`, `Status() JobStatus`) that both `RefreshManager` and the new `IdentifyManager` compose. Concurrency-correctness code is exactly the kind of logic where duplication is a real risk (a race/mutex bug fixed in one copy but not the other), unlike ordinary business logic — this is a deliberate, scoped exception to "avoid premature abstraction," justified by having two real, immediate call sites, not a hypothetical third. `RefreshManager`'s public API and behavior are unchanged; this is an internal refactor.
+- **Refresh and identify jobs use separate `JobManager` instances and can run concurrently.** They touch different external resources (local `fpcalc` + disk vs. network calls to AcoustID/MusicBrainz) and there's no correctness reason to serialize them against each other — only against themselves (no two identify jobs at once, no two refreshes at once). SQLite's per-transaction isolation makes any interleaved writes to the same file row safe, just not strictly ordered relative to each other, which is an acceptable trade-off.
+- **Identify commits per-file, not chunked.** Unlike the scan refresh (where batching was necessary because per-file SQLite commits were the dominant cost), each identify iteration is already paced to ~1 request/second by the MusicBrainz gate — a single SQLite commit (sub-millisecond) is negligible next to that, so committing immediately after each file both simplifies the code and gives the best possible live progress (each row updates in the UI the moment it's resolved, not in batches).
+- **New `TrackingStore` method, not reuse of `BulkApply`.** `BulkApply` is shaped around the scan refresh's new/changed/missing/reappeared semantics. Identification is a different, narrower update (status + resolved metadata fields on an existing row), so it gets its own port method (`RecordIdentification`) rather than overloading `BulkApply` with unrelated fields.
+- **Configuration**: `ACOUSTID_API_KEY` and a MusicBrainz-compliant `User-Agent` (app name/version/contact) are read from environment variables at startup; the identify usecase refuses to run (with a clear error surfaced to the API caller) if either is unset, rather than silently making unauthenticated/non-compliant requests.
+
+## Risks / Trade-offs
+
+- **Release-selection heuristic can pick the "wrong" release** (e.g. a compilation instead of the original album) → acceptable v1 trade-off; the resolved data is still correct at the recording level (artist/title), only track-number/album-title framing could be off. Documented as a known limitation, not silently hidden.
+- **A recording with zero matching AcoustID candidates is indistinguishable from "AcoustID is temporarily down"** unless the gateway clearly distinguishes "no results" from "request failed" → mitigated by treating only an explicit empty-results AcoustID response as `not_found`; any transport/HTTP error leaves the file's status unchanged and surfaces an error instead, so a transient outage doesn't get misrecorded as a genuine non-match.
+- **Refactoring `RefreshManager` to use the new shared `JobManager` risks a regression in already-verified behavior** → mitigated by keeping `RefreshManager`'s public API identical and re-running the existing Docker verification scenarios (startup refresh, 409 on concurrent trigger, progress polling) after the refactor, before adding any new identify-specific behavior on top.
+- **Bulk identify of a large selection still takes roughly `N` seconds at 1 req/sec** → this is inherent to the rate limit, not a bug; the progress endpoint and disabled-while-running UI (already proven for scan refresh) make that wait legible rather than hidden.
+
+## Open Questions
+
+- Should a failed/`not_found` file be automatically retryable by re-selecting it and clicking Identify again (yes, by default, since nothing prevents re-running identification on a `new`-or-`not_found` row), or should `not_found` be sticky and require an explicit "retry" affordance? Defaulting to "just re-select and re-run" for v1 — no special retry UI needed since the identify action already works on any selected row regardless of prior status.

@@ -25,6 +25,13 @@ type FileRecord struct {
 	Status           TrackingStatus // one of StatusNew, StatusIdentified, StatusNotFound
 	Missing          bool
 	FingerprintError string // non-empty when the most recent fingerprint attempt failed
+
+	// Resolved metadata, populated only once Status is StatusIdentified.
+	Artist        string
+	Album         string
+	Title         string
+	TrackNumber   int
+	RecordingMBID string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

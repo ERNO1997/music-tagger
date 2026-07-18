@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 
 	"music-tagger/internal/infrastructure/filestat"
+	"music-tagger/internal/infrastructure/gateways"
 	"music-tagger/internal/infrastructure/persistence"
 	v1 "music-tagger/internal/infrastructure/web/v1"
 	"music-tagger/internal/usecases"
@@ -32,6 +34,9 @@ func main() {
 		dbPath = "/data/music-tagger.db"
 	}
 
+	acoustIDKey := os.Getenv("ACOUSTID_API_KEY")
+	musicBrainzUserAgent := os.Getenv("MUSICBRAINZ_USER_AGENT")
+
 	store, err := persistence.NewSQLiteStore(context.Background(), dbPath)
 	if err != nil {
 		log.Fatalf("opening tracking store: %v", err)
@@ -42,12 +47,23 @@ func main() {
 	scanner := usecases.NewScanLocalVolume(fingerprinter, store)
 	refreshManager := usecases.NewRefreshManager(scanner, musicRoot)
 
+	acoustIDClient := gateways.NewAcoustIDClient(acoustIDKey)
+	musicBrainzClient := gateways.NewMusicBrainzClient(musicBrainzUserAgent)
+	identifyFile := usecases.NewIdentifyFile(acoustIDClient, musicBrainzClient, store)
+	identifyManager := usecases.NewIdentifyManager(identifyFile, store)
+
+	var identifyConfigErr error
+	if acoustIDKey == "" || musicBrainzUserAgent == "" {
+		identifyConfigErr = fmt.Errorf("identification is not configured: set ACOUSTID_API_KEY and MUSICBRAINZ_USER_AGENT")
+	}
+
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
+	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

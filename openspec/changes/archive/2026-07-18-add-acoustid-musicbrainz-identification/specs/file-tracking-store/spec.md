@@ -1,8 +1,4 @@
-## Purpose
-
-Persistent, per-file tracking of the mounted `/music` volume's discovery and identification state — surviving restarts and distinguishing new, changed, unchanged, missing, and identified files — so that scanning and identification don't need to re-derive this from scratch on every request.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Persistent per-file tracking record
 The system SHALL persist one record per discovered audio file — path, format, fingerprint, size, modification time, identification status (`new`, `identified`, `not_found`, `missing`), and, once identified, resolved artist, album, title, track number, and MusicBrainz Recording ID — in an embedded SQLite database that survives process restarts.
@@ -40,6 +36,8 @@ The system SHALL mark a previously tracked file as `missing` when it is no longe
 #### Scenario: Missing file reappears unchanged
 - **WHEN** a refresh finds a file at a path previously marked `missing`, with size and modification time matching the preserved record
 - **THEN** the system SHALL treat it as unchanged and restore it to its prior (pre-`missing`) status rather than treating it as a new file
+
+## ADDED Requirements
 
 ### Requirement: Identification results are recorded per file
 The system SHALL update a tracked file's record with the outcome of an identification attempt, without altering its fingerprint, size, or modification time.
