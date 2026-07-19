@@ -3,6 +3,7 @@ const rowsEl = document.getElementById('library-rows');
 const refreshButton = document.getElementById('refresh-button');
 const identifyButton = document.getElementById('identify-button');
 const enrichButton = document.getElementById('enrich-button');
+const tagButton = document.getElementById('tag-button');
 const selectAllCheckbox = document.getElementById('select-all');
 const detailsOverlay = document.getElementById('details-overlay');
 const detailsFields = document.getElementById('details-fields');
@@ -10,6 +11,8 @@ const detailsClose = document.getElementById('details-close');
 const detailsCover = document.getElementById('details-cover');
 const detailsLyricsSection = document.getElementById('details-lyrics-section');
 const detailsLyrics = document.getElementById('details-lyrics');
+const detailsEmbeddedTagsSection = document.getElementById('details-embedded-tags-section');
+const detailsEmbeddedTags = document.getElementById('details-embedded-tags');
 
 const DETAILS_FIELD_LABELS = [
   ['path', 'Path'],
@@ -46,12 +49,24 @@ const STATUS_CLASSES = {
   missing: 'text-neutral-500',
 };
 
+const EMBEDDED_TAG_FIELD_LABELS = [
+  ['title', 'Title'],
+  ['artist', 'Artist'],
+  ['album', 'Album'],
+  ['album_artist', 'Album Artist'],
+  ['track_number', 'Track Number'],
+  ['disc_number', 'Disc Number'],
+  ['year', 'Year'],
+];
+
 const selectedPaths = new Set();
 let scanPollTimer = null;
 let identifyPollTimer = null;
 let identifyRunning = false;
 let enrichPollTimer = null;
 let enrichRunning = false;
+let tagPollTimer = null;
+let tagRunning = false;
 let lastEntries = [];
 
 async function loadLibrary() {
@@ -85,6 +100,7 @@ function renderTable(entries) {
     statusEl.className = 'text-neutral-400 mb-4';
     updateIdentifyButton();
     updateEnrichButton();
+    updateTagButton();
     return;
   }
 
@@ -96,6 +112,7 @@ function renderTable(entries) {
   }
   updateIdentifyButton();
   updateEnrichButton();
+  updateTagButton();
 }
 
 function renderRow(entry) {
@@ -109,6 +126,7 @@ function renderRow(entry) {
   const coverCell = renderCoverCell(entry);
   const metadataCell = renderMetadataCell(entry);
   const lyricsCell = entry.has_lyrics ? '<span class="text-green-400" title="Lyrics available">&#9834;</span>' : '—';
+  const taggedCell = renderTaggedCell(entry);
 
   if (entry.error) {
     row.classList.add('text-red-400');
@@ -122,6 +140,7 @@ function renderRow(entry) {
       <td class="px-4 py-3">${escapeHtml(statusLabel)}</td>
       <td class="px-4 py-3">${metadataCell}</td>
       <td class="px-4 py-3">—</td>
+      <td class="px-4 py-3">${taggedCell}</td>
     `;
     return row;
   }
@@ -136,8 +155,19 @@ function renderRow(entry) {
     <td class="px-4 py-3 ${statusClass}">${escapeHtml(statusLabel)}</td>
     <td class="px-4 py-3">${metadataCell}</td>
     <td class="px-4 py-3">${lyricsCell}</td>
+    <td class="px-4 py-3">${taggedCell}</td>
   `;
   return row;
+}
+
+function renderTaggedCell(entry) {
+  if (entry.tagged) {
+    return '<span class="text-green-400" title="Tagged">&#10003;</span>';
+  }
+  if (entry.tag_error) {
+    return `<span class="text-red-400" title="Tagging failed: ${escapeHtml(entry.tag_error)}">&#10007;</span>`;
+  }
+  return '—';
 }
 
 function renderCoverCell(entry) {
@@ -181,6 +211,7 @@ rowsEl.addEventListener('change', (e) => {
   }
   updateIdentifyButton();
   updateEnrichButton();
+  updateTagButton();
 });
 
 rowsEl.addEventListener('click', (e) => {
@@ -232,7 +263,52 @@ async function openDetails(path) {
     await loadLyrics(entry.path);
   }
 
+  detailsEmbeddedTagsSection.classList.add('hidden');
+  detailsEmbeddedTags.innerHTML = '';
+  if (entry.tagged) {
+    await loadEmbeddedTags(entry.path);
+  }
+
   detailsOverlay.classList.remove('hidden');
+}
+
+async function loadEmbeddedTags(path) {
+  try {
+    const res = await fetch(`/api/v1/library/tags?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      throw new Error(`request failed: ${res.status}`);
+    }
+    const data = await res.json();
+
+    detailsEmbeddedTags.innerHTML = '';
+    for (const [key, label] of EMBEDDED_TAG_FIELD_LABELS) {
+      const value = data[key];
+      if (value === undefined || value === null || value === '') {
+        continue;
+      }
+      const row = document.createElement('div');
+      row.className = 'flex justify-between gap-4';
+      row.innerHTML = `
+        <dt class="text-neutral-400">${escapeHtml(label)}</dt>
+        <dd class="font-mono text-xs text-right break-all">${escapeHtml(String(value))}</dd>
+      `;
+      detailsEmbeddedTags.appendChild(row);
+    }
+    const extras = [
+      data.has_lyrics ? 'Lyrics embedded' : null,
+      data.has_cover_art ? 'Cover art embedded' : null,
+    ].filter(Boolean);
+    if (extras.length > 0) {
+      const row = document.createElement('div');
+      row.className = 'text-neutral-400 text-xs';
+      row.textContent = extras.join(' · ');
+      detailsEmbeddedTags.appendChild(row);
+    }
+    detailsEmbeddedTagsSection.classList.remove('hidden');
+  } catch (err) {
+    detailsEmbeddedTags.textContent = `Failed to load embedded tags: ${err.message}`;
+    detailsEmbeddedTagsSection.classList.remove('hidden');
+  }
 }
 
 async function loadLyrics(path) {
@@ -273,6 +349,7 @@ selectAllCheckbox.addEventListener('change', () => {
   }
   updateIdentifyButton();
   updateEnrichButton();
+  updateTagButton();
 });
 
 function updateIdentifyButton() {
@@ -286,6 +363,13 @@ function updateEnrichButton() {
   enrichButton.disabled = enrichRunning || selectedPaths.size === 0;
   if (!enrichRunning) {
     enrichButton.textContent = 'Enrich Selected';
+  }
+}
+
+function updateTagButton() {
+  tagButton.disabled = tagRunning || selectedPaths.size === 0;
+  if (!tagRunning) {
+    tagButton.textContent = 'Tag Selected';
   }
 }
 
@@ -307,6 +391,14 @@ async function fetchIdentifyStatus() {
 
 async function fetchEnrichStatus() {
   const res = await fetch('/api/v1/library/enrich/status');
+  if (!res.ok) {
+    throw new Error(`status request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function fetchTagStatus() {
+  const res = await fetch('/api/v1/library/tag/status');
   if (!res.ok) {
     throw new Error(`status request failed: ${res.status}`);
   }
@@ -339,6 +431,14 @@ function setEnrichingUI(running, processed, total) {
   updateEnrichButton();
   if (running) {
     enrichButton.textContent = total > 0 ? `Enriching ${processed}/${total}…` : 'Enriching…';
+  }
+}
+
+function setTaggingUI(running, processed, total) {
+  tagRunning = running;
+  updateTagButton();
+  if (running) {
+    tagButton.textContent = total > 0 ? `Tagging ${processed}/${total}…` : 'Tagging…';
   }
 }
 
@@ -398,6 +498,26 @@ function startEnrichPolling() {
     } catch (err) {
       clearInterval(enrichPollTimer);
       enrichPollTimer = null;
+    }
+  }, 1000);
+}
+
+function startTagPolling() {
+  if (tagPollTimer) {
+    return;
+  }
+  tagPollTimer = setInterval(async () => {
+    try {
+      const status = await fetchTagStatus();
+      setTaggingUI(status.running, status.processed, status.total);
+      await loadLibrary();
+      if (!status.running) {
+        clearInterval(tagPollTimer);
+        tagPollTimer = null;
+      }
+    } catch (err) {
+      clearInterval(tagPollTimer);
+      tagPollTimer = null;
     }
   }, 1000);
 }
@@ -464,9 +584,33 @@ async function triggerEnrich() {
   }
 }
 
+async function triggerTag() {
+  const paths = [...selectedPaths];
+  if (paths.length === 0) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/v1/library/tag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+    if (res.status !== 202 && res.status !== 409) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `tag request failed: ${res.status}`);
+    }
+    setTaggingUI(true, 0, paths.length);
+    startTagPolling();
+  } catch (err) {
+    statusEl.textContent = `Failed to start tagging: ${err.message}`;
+    statusEl.className = 'text-red-400 mb-4';
+  }
+}
+
 refreshButton.addEventListener('click', triggerRefresh);
 identifyButton.addEventListener('click', triggerIdentify);
 enrichButton.addEventListener('click', triggerEnrich);
+tagButton.addEventListener('click', triggerTag);
 
 (async function init() {
   await loadLibrary();
@@ -498,6 +642,16 @@ enrichButton.addEventListener('click', triggerEnrich);
     }
   } catch (err) {
     // Status endpoint unreachable — enrich button stays disabled until a
+    // selection is made anyway.
+  }
+  try {
+    const tagStatus = await fetchTagStatus();
+    setTaggingUI(tagStatus.running, tagStatus.processed, tagStatus.total);
+    if (tagStatus.running) {
+      startTagPolling();
+    }
+  } catch (err) {
+    // Status endpoint unreachable — tag button stays disabled until a
     // selection is made anyway.
   }
 })();

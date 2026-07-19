@@ -32,6 +32,9 @@ type LibraryEntry struct {
 
 	HasCoverArt bool `json:"has_cover_art,omitempty"`
 	HasLyrics   bool `json:"has_lyrics,omitempty"`
+
+	Tagged   bool   `json:"tagged,omitempty"`
+	TagError string `json:"tag_error,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -76,6 +79,9 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 
 			HasCoverArt: r.CoverArtPath != "",
 			HasLyrics:   r.Lyrics != "" || r.SyncedLyrics != "",
+
+			Tagged:   r.Tagged,
+			TagError: r.TagError,
 		})
 	}
 

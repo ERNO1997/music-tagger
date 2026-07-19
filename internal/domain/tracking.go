@@ -55,6 +55,13 @@ type FileRecord struct {
 	// many LRCLIB entries have only one or the other.
 	Lyrics       string
 	SyncedLyrics string
+
+	// Tagged and TagError reflect the outcome of the most recent attempt
+	// to write resolved metadata/cover art/lyrics into the physical file's
+	// own tags. TagError is non-empty only when a tag write was attempted
+	// and failed.
+	Tagged   bool
+	TagError string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

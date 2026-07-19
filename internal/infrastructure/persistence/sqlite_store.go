@@ -97,6 +97,8 @@ var columnMigrations = []struct {
 	{"cover_art_path", "TEXT NOT NULL DEFAULT ''"},
 	{"lyrics", "TEXT NOT NULL DEFAULT ''"},
 	{"synced_lyrics", "TEXT NOT NULL DEFAULT ''"},
+	{"tagged", "INTEGER NOT NULL DEFAULT 0"},
+	{"tag_error", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrateColumns(ctx context.Context, db *sql.DB) error {
@@ -149,7 +151,7 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error
 		FROM files
 	`)
 	if err != nil {
@@ -161,16 +163,17 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 	for rows.Next() {
 		var rec domain.FileRecord
 		var format, status string
-		var missing int
+		var missing, tagged int
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics); err != nil {
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
 		rec.Status = domain.TrackingStatus(status)
 		rec.Missing = missing != 0
+		rec.Tagged = tagged != 0
 		result[rec.Path] = rec
 	}
 	if err := rows.Err(); err != nil {
@@ -178,6 +181,38 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 	}
 
 	return result, nil
+}
+
+// Get returns one file's complete tracked record via a single indexed
+// lookup, for tagging without loading the whole table.
+func (s *SQLiteStore) Get(ctx context.Context, path string) (domain.FileRecord, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+		       artist, album, title, track_number, recording_mbid,
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error
+		FROM files
+		WHERE path = ?
+	`, path)
+
+	var rec domain.FileRecord
+	var format, status string
+	var missing, tagged int
+	err := row.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
+		&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
+		&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
+		&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError)
+	if err == sql.ErrNoRows {
+		return domain.FileRecord{}, false, nil
+	}
+	if err != nil {
+		return domain.FileRecord{}, false, fmt.Errorf("querying tracked record for %s: %w", path, err)
+	}
+	rec.Format = domain.Format(format)
+	rec.Status = domain.TrackingStatus(status)
+	rec.Missing = missing != 0
+	rec.Tagged = tagged != 0
+	return rec, true, nil
 }
 
 func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) error {
@@ -280,10 +315,10 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 	now := time.Now().Unix()
 
 	if result.Status == domain.StatusIdentified {
-		// cover_art_path and lyrics/synced_lyrics are reset here too: a
-		// re-identification can resolve to a different release/recording
-		// than before, which would make any previously stored enrichment
-		// stale.
+		// cover_art_path, lyrics/synced_lyrics, and tagged/tag_error are
+		// reset here too: a re-identification can resolve to a different
+		// release/recording than before, which would make any previously
+		// stored enrichment or on-disk tagging stale.
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE files SET
 				status = ?,
@@ -303,6 +338,8 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 				cover_art_path = '',
 				lyrics = '',
 				synced_lyrics = '',
+				tagged = 0,
+				tag_error = '',
 				updated_at = ?
 			WHERE path = ?
 		`, string(result.Status), result.Metadata.Artist, result.Metadata.Album, result.Metadata.Title,
@@ -317,7 +354,7 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, cover_art_path = '', lyrics = '', synced_lyrics = '', updated_at = ? WHERE path = ?`, string(result.Status), now, path)
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, cover_art_path = '', lyrics = '', synced_lyrics = '', tagged = 0, tag_error = '', updated_at = ? WHERE path = ?`, string(result.Status), now, path)
 	if err != nil {
 		return fmt.Errorf("recording identification outcome for %s: %w", path, err)
 	}
@@ -372,4 +409,19 @@ func (s *SQLiteStore) GetLyrics(ctx context.Context, path string) (string, strin
 		return "", "", false, fmt.Errorf("querying lyrics for %s: %w", path, err)
 	}
 	return lyrics, syncedLyrics, lyrics != "" || syncedLyrics != "", nil
+}
+
+// RecordTagged updates one file's tagged outcome, without altering its
+// fingerprint, status, resolved metadata, cover art path, or lyrics.
+func (s *SQLiteStore) RecordTagged(ctx context.Context, path string, tagged bool, tagErr string) error {
+	now := time.Now().Unix()
+	taggedInt := 0
+	if tagged {
+		taggedInt = 1
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET tagged = ?, tag_error = ?, updated_at = ? WHERE path = ?`, taggedInt, tagErr, now, path)
+	if err != nil {
+		return fmt.Errorf("recording tagged outcome for %s: %w", path, err)
+	}
+	return nil
 }

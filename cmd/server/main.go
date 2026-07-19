@@ -68,16 +68,22 @@ func main() {
 	enrichFile := usecases.NewEnrichFile(coverArtClient, coverArtStore, lrclibClient, store)
 	enrichManager := usecases.NewEnrichManager(enrichFile, store)
 
+	tagger := filestat.NewTagLibTagger()
+	tagFile := usecases.NewTagFile(tagger, store)
+	tagManager := usecases.NewTagManager(tagFile)
+
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
 	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
 	enrichHandler := v1.NewEnrichHandler(enrichManager)
 	coverHandler := v1.NewCoverHandler(store)
 	lyricsHandler := v1.NewLyricsHandler(store)
+	tagHandler := v1.NewTagHandler(tagManager)
+	embeddedTagsHandler := v1.NewEmbeddedTagsHandler(tagFile)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

@@ -1,19 +1,4 @@
-## Purpose
-
-Discovery, persistent tracking, fingerprint reporting, on-demand identification, on-demand cover art/lyrics enrichment, and on-demand tag writing for the mounted local `/music` volume: recursively finding supported audio files, keeping a durable per-file record of their status (via the `file-tracking-store` capability), resolving canonical metadata on demand (via the `acoustid-lookup` and `musicbrainz-metadata` capabilities), resolving cover art and lyrics on demand (via the `cover-art-lookup` and `lyrics-lookup` capabilities), writing resolved metadata/cover art/lyrics into the physical audio file on demand (via the `audio-tag-writing` capability), and surfacing all of this through an API and a web listing page — with no file relocation.
-
-## Requirements
-
-### Requirement: Recursive discovery of audio files in the mounted volume
-The system SHALL recursively walk the configured `/music` directory and identify all files with `.mp3`, `.flac`, or `.m4a` extensions as candidate audio files, at any subdirectory depth.
-
-#### Scenario: Nested directories are included
-- **WHEN** `/music` contains audio files nested at arbitrary subdirectory depths
-- **THEN** all matching files SHALL be included in the scan result regardless of depth
-
-#### Scenario: Non-audio files are ignored
-- **WHEN** `/music` contains files with extensions other than `.mp3`/`.flac`/`.m4a`
-- **THEN** those files SHALL be excluded from the scan result and SHALL NOT be passed to the fingerprinting component
+## MODIFIED Requirements
 
 ### Requirement: Read-only scan report via API
 The system SHALL expose a `GET /api/v1/library` endpoint that returns the currently tracked file list — path, format, duration, fingerprint, identification status, (once identified) resolved artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and (once enriched) a cover art indicator, a lyrics indicator, and a tagged indicator — read directly from the persistent tracking store (see the `file-tracking-store` capability), without performing a disk walk or fingerprinting on every call. The endpoint SHALL NOT write, move, rename, or otherwise modify any file under `/music`.
@@ -85,68 +70,6 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 - **WHEN** a tag job is currently running
 - **THEN** the UI's tag action SHALL be disabled and SHALL display progress, re-enabling only once the job completes
 
-### Requirement: Asynchronous refresh action
-The system SHALL expose a `POST /api/v1/library/scan` endpoint that starts the disk walk, fingerprinting, and tracking-store update (per the `file-tracking-store` capability) in the background and returns immediately, rather than blocking for the duration of the refresh.
-
-#### Scenario: Refresh accepted and runs in the background
-- **WHEN** a client issues `POST /api/v1/library/scan` while no refresh is running
-- **THEN** the response SHALL be `202 Accepted` and the walk/fingerprint/update SHALL proceed asynchronously, without the HTTP request blocking until it finishes
-
-#### Scenario: Per-file fingerprint failure does not abort the refresh
-- **WHEN** one file in `/music` fails fingerprinting during a refresh (e.g. a corrupt audio file)
-- **THEN** that file SHALL be reported with an error indicator in its tracked record and the refresh SHALL continue processing the remaining files
-
-### Requirement: Concurrent refresh prevention
-The system SHALL allow at most one refresh to run at a time.
-
-#### Scenario: Refresh requested while one is already running
-- **WHEN** a client issues `POST /api/v1/library/scan` while a refresh is already in progress
-- **THEN** the response SHALL be `409 Conflict` and no second, concurrent refresh SHALL be started
-
-### Requirement: Refresh triggered automatically at server startup
-The system SHALL start one refresh automatically when the server starts, without requiring a manual trigger.
-
-#### Scenario: Server starts with an unpopulated or stale store
-- **WHEN** the server process starts
-- **THEN** it SHALL begin a background refresh immediately, and SHALL accept HTTP requests (including `GET /api/v1/library`) without waiting for that refresh to complete
-
-### Requirement: Refresh progress is observable
-The system SHALL expose a way for clients to determine whether a refresh is currently running and its progress.
-
-#### Scenario: Progress reported while running
-- **WHEN** a client queries refresh status while a refresh is in progress
-- **THEN** the response SHALL indicate that a refresh is running and SHALL include how many of the files needing fingerprinting have been processed so far
-
-#### Scenario: Idle status when no refresh is running
-- **WHEN** a client queries refresh status while no refresh is in progress
-- **THEN** the response SHALL indicate that no refresh is currently running
-
-### Requirement: On-demand identification action
-The system SHALL expose a `POST /api/v1/library/identify` endpoint accepting a list of one or more file paths, which starts a background job resolving each path's canonical metadata via AcoustID and MusicBrainz (per the `acoustid-lookup` and `musicbrainz-metadata` capabilities) and returns immediately rather than blocking for the duration of the job.
-
-#### Scenario: Identify job accepted and runs in the background
-- **WHEN** a client issues `POST /api/v1/library/identify` with one or more paths while no identify job is running
-- **THEN** the response SHALL be `202 Accepted` and the paths SHALL be processed asynchronously, one at a time, without the HTTP request blocking until the job finishes
-
-#### Scenario: Concurrent identify job rejected
-- **WHEN** a client issues `POST /api/v1/library/identify` while an identify job is already running
-- **THEN** the response SHALL be `409 Conflict` and no second, concurrent identify job SHALL be started
-
-#### Scenario: Identify job runs independently of a scan refresh
-- **WHEN** a scan refresh is currently running
-- **THEN** an identify job SHALL still be accepted and run concurrently, since the two do not share a concurrency guard
-
-### Requirement: Identification progress is observable
-The system SHALL expose a `GET /api/v1/library/identify/status` endpoint reporting whether an identify job is currently running and its progress.
-
-#### Scenario: Progress reported while running
-- **WHEN** a client queries identify status while a job is in progress
-- **THEN** the response SHALL indicate that a job is running and SHALL include how many of the submitted paths have been processed so far
-
-#### Scenario: Idle status when no identify job is running
-- **WHEN** a client queries identify status while no identify job is in progress
-- **THEN** the response SHALL indicate that no identify job is currently running
-
 ### Requirement: Per-file details view
 The system SHALL allow a user to open a details view for a single tracked file, showing its complete resolved record — path, format, duration, fingerprint, status, any fingerprint error, (once identified) artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and (once enriched) its cover art and lyrics, and (once tagged) the file's actual embedded tags read live from disk, shown alongside the resolved metadata for visual comparison. Opening this view SHALL NOT require any request beyond the already-fetched `GET /api/v1/library` data, except for the cover art image, lyrics text, and embedded tags themselves.
 
@@ -174,57 +97,7 @@ The system SHALL allow a user to open a details view for a single tracked file, 
 - **WHEN** a user opens the details view for a file with no `tagged` indicator present
 - **THEN** the UI SHALL NOT call `GET /api/v1/library/tags` for that file
 
-### Requirement: On-demand enrichment action
-The system SHALL expose a `POST /api/v1/library/enrich` endpoint accepting a list of one or more file paths, which starts a background job resolving each already-identified path's cover art via Cover Art Archive and lyrics via LRCLIB (per the `cover-art-lookup` and `lyrics-lookup` capabilities) and returns immediately rather than blocking for the duration of the job.
-
-#### Scenario: Enrich job accepted and runs in the background
-- **WHEN** a client issues `POST /api/v1/library/enrich` with one or more paths while no enrich job is running
-- **THEN** the response SHALL be `202 Accepted` and the paths SHALL be processed asynchronously, without the HTTP request blocking until the job finishes
-
-#### Scenario: Concurrent enrich job rejected
-- **WHEN** a client issues `POST /api/v1/library/enrich` while an enrich job is already running
-- **THEN** the response SHALL be `409 Conflict` and no second, concurrent enrich job SHALL be started
-
-#### Scenario: Enrich job runs independently of scan and identify
-- **WHEN** a scan refresh or an identify job is currently running
-- **THEN** an enrich job SHALL still be accepted and run concurrently, since none of the three share a concurrency guard
-
-#### Scenario: Cover art and lyrics are both attempted per file
-- **WHEN** an enrich job processes an already-identified file
-- **THEN** the system SHALL attempt to resolve both cover art and lyrics for that file, recording whichever of the two succeed independently of the other
-
-### Requirement: Enrichment progress is observable
-The system SHALL expose a `GET /api/v1/library/enrich/status` endpoint reporting whether an enrich job is currently running and its progress.
-
-#### Scenario: Progress reported while running
-- **WHEN** a client queries enrich status while a job is in progress
-- **THEN** the response SHALL indicate that a job is running and SHALL include how many of the submitted paths have been processed so far
-
-#### Scenario: Idle status when no enrich job is running
-- **WHEN** a client queries enrich status while no enrich job is in progress
-- **THEN** the response SHALL indicate that no enrich job is currently running
-
-### Requirement: Cover art image serving
-The system SHALL expose a `GET /api/v1/library/cover` endpoint that, given a tracked file's path, serves that file's stored cover art image bytes with the correct content type.
-
-#### Scenario: Cover art available
-- **WHEN** a client requests cover art for a file with a stored cover art path
-- **THEN** the response SHALL be `200 OK` with the image bytes and an appropriate `Content-Type`
-
-#### Scenario: No cover art stored
-- **WHEN** a client requests cover art for a file with no stored cover art path
-- **THEN** the response SHALL be `404 Not Found`
-
-### Requirement: Lyrics retrieval via API
-The system SHALL expose a `GET /api/v1/library/lyrics` endpoint that, given a tracked file's path, returns that file's stored plain and synced lyrics as JSON.
-
-#### Scenario: Lyrics available
-- **WHEN** a client requests lyrics for a file with stored lyrics
-- **THEN** the response SHALL be `200 OK` with a JSON body containing the plain lyrics and, when available, synced lyrics
-
-#### Scenario: No lyrics stored
-- **WHEN** a client requests lyrics for a file with no stored lyrics
-- **THEN** the response SHALL be `404 Not Found`
+## ADDED Requirements
 
 ### Requirement: On-demand tagging action
 The system SHALL expose a `POST /api/v1/library/tag` endpoint accepting a list of one or more file paths, which starts a background job writing each already-identified path's resolved metadata, cover art, and lyrics into the physical audio file's own tags (per the `audio-tag-writing` capability) and returns immediately rather than blocking for the duration of the job.

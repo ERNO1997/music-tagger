@@ -1,8 +1,4 @@
-## Purpose
-
-Persistent, per-file tracking of the mounted `/music` volume's discovery and identification state — surviving restarts and distinguishing new, changed, unchanged, missing, identified, and enriched files — so that scanning, identification, and enrichment don't need to re-derive this from scratch on every request.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Persistent per-file tracking record
 The system SHALL persist one record per discovered audio file — path, format, fingerprint, size, modification time, identification status (`new`, `identified`, `not_found`, `missing`), once identified, resolved artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and, once enriched, a cover art file path and plain/synced lyrics, and, once tagging has been attempted, a tagged outcome (whether the on-disk file was successfully tagged, and any tagging error) — in an embedded SQLite database that survives process restarts.
@@ -26,32 +22,6 @@ The system SHALL persist one record per discovered audio file — path, format, 
 #### Scenario: Tagged outcome survives a restart
 - **WHEN** the server process is restarted after a file has been tagged
 - **THEN** that file's tagged outcome SHALL still be retrievable without re-running tagging
-
-### Requirement: Change detection on refresh
-The system SHALL classify each file discovered during a refresh into exactly one of: newly discovered, changed since last seen, or unchanged since last seen, using size and modification time as the change signal.
-
-#### Scenario: New file discovered
-- **WHEN** a refresh finds a file with no existing tracking record
-- **THEN** the system SHALL insert a new record with status `new` and a freshly computed fingerprint
-
-#### Scenario: Changed file is re-fingerprinted
-- **WHEN** a refresh finds a tracked file whose size or modification time differs from its stored record
-- **THEN** the system SHALL recompute its fingerprint, update the stored record, and reset its status to `new`
-
-#### Scenario: Unchanged file is not re-fingerprinted
-- **WHEN** a refresh finds a tracked file whose size and modification time match its stored record
-- **THEN** the system SHALL skip fingerprinting for that file and leave its stored status unchanged
-
-### Requirement: Missing files are preserved, not deleted
-The system SHALL mark a previously tracked file as `missing` when it is no longer found on disk during a refresh, without deleting its tracking record.
-
-#### Scenario: Tracked file no longer on disk
-- **WHEN** a refresh does not find a file on disk that has an existing tracking record
-- **THEN** the system SHALL set that record's status to `missing` and SHALL preserve its last-known fingerprint, size, and modification time
-
-#### Scenario: Missing file reappears unchanged
-- **WHEN** a refresh finds a file at a path previously marked `missing`, with size and modification time matching the preserved record
-- **THEN** the system SHALL treat it as unchanged and restore it to its prior (pre-`missing`) status rather than treating it as a new file
 
 ### Requirement: Identification results are recorded per file
 The system SHALL update a tracked file's record with the outcome of an identification attempt, without altering its fingerprint, size, or modification time.
@@ -80,36 +50,7 @@ The system SHALL update a tracked file's record with the outcome of an identific
 - **WHEN** a previously tagged tracked file is identified again, whether it resolves to `identified` or `not_found`
 - **THEN** the system SHALL clear its stored tagged outcome, since the on-disk file's tags were written against a possibly-different prior identity and must be re-tagged to reflect the new one
 
-### Requirement: Enrichment results are recorded per file
-The system SHALL update a tracked file's record with the outcome of a cover art and lyrics enrichment attempt, without altering its fingerprint, identification status, or resolved metadata.
-
-#### Scenario: Cover art found and stored
-- **WHEN** enrichment resolves a front cover image for a tracked file's release
-- **THEN** the system SHALL store the downloaded image's file path on that file's tracking record
-
-#### Scenario: No cover art available
-- **WHEN** enrichment finds no cover art for a tracked file's release
-- **THEN** the system SHALL leave that file's cover art path empty without treating this as an error
-
-#### Scenario: Lyrics found and stored
-- **WHEN** enrichment resolves lyrics for a tracked file
-- **THEN** the system SHALL store the plain lyrics, and synced lyrics when available, on that file's tracking record
-
-#### Scenario: No lyrics available
-- **WHEN** enrichment finds no lyrics for a tracked file (not found, or the track is instrumental)
-- **THEN** the system SHALL leave that file's lyrics fields empty without treating this as an error
-
-#### Scenario: Cover art and lyrics outcomes are independent
-- **WHEN** enrichment succeeds for one of cover art or lyrics but fails or finds nothing for the other
-- **THEN** the system SHALL record the successful outcome regardless of the other's result
-
-#### Scenario: Enrichment attempted on an unidentified file
-- **WHEN** enrichment is requested for a file that is not yet `identified`
-- **THEN** the system SHALL skip that file (no resolved metadata is available to look up) without aborting enrichment of the rest of the batch
-
-#### Scenario: Shared cover art across tracks on the same release
-- **WHEN** two tracked files resolve to the same release during enrichment
-- **THEN** the system SHALL reuse the same stored cover art file rather than downloading and storing a duplicate
+## ADDED Requirements
 
 ### Requirement: Tagging results are recorded per file
 The system SHALL update a tracked file's record with the outcome of a tag-writing attempt, without altering its fingerprint, identification status, resolved metadata, cover art path, or lyrics.

@@ -48,6 +48,17 @@ type TrackingStore interface {
 	// single indexed lookup, not a full LoadAll) — used to serve lyrics
 	// on demand from the details view.
 	GetLyrics(ctx context.Context, path string) (lyrics string, syncedLyrics string, found bool, err error)
+
+	// Get returns one file's complete tracked record (a single indexed
+	// lookup, not a full LoadAll) — used by tagging to load one file's
+	// resolved metadata/cover art path/lyrics without loading the whole
+	// table.
+	Get(ctx context.Context, path string) (record domain.FileRecord, found bool, err error)
+
+	// RecordTagged updates one file's tagged outcome, without altering its
+	// fingerprint, status, resolved metadata, cover art path, or lyrics.
+	// tagErr is empty on a successful tag write.
+	RecordTagged(ctx context.Context, path string, tagged bool, tagErr string) error
 }
 
 // BulkApply is the batched result of one refresh pass.
@@ -133,4 +144,53 @@ type CoverArtLookup interface {
 // itself failed.
 type LyricsLookup interface {
 	Lookup(ctx context.Context, artist, title, album string, durationSeconds int) (plainLyrics, syncedLyrics string, found bool, err error)
+}
+
+// TagInput is one already-identified tracked file's resolved metadata,
+// cover art, and lyrics, in the shape needed to write it into the physical
+// file's own tags.
+type TagInput struct {
+	Artist      string
+	Album       string
+	Title       string
+	AlbumArtist string
+	TrackNumber int
+	TotalTracks int
+	DiscNumber  int
+	TotalDiscs  int
+	Year        int
+
+	// CoverArt is the image bytes to embed, or nil if no cover art is
+	// stored for this file.
+	CoverArt []byte
+
+	// Lyrics is the plain lyrics text to embed, or empty if none is
+	// stored for this file.
+	Lyrics string
+}
+
+// EmbeddedTags is what's actually, currently embedded in a physical audio
+// file's own tags, read live from disk — independent of (and not to be
+// confused with) the resolved metadata cached in the tracking store.
+type EmbeddedTags struct {
+	Title       string
+	Artist      string
+	Album       string
+	AlbumArtist string
+	TrackNumber int
+	DiscNumber  int
+	Year        int
+
+	HasLyrics   bool
+	HasCoverArt bool
+}
+
+// Tagger writes resolved metadata, cover art, and lyrics into an audio
+// file's own tag format (ID3v2 for MP3, Vorbis comments for FLAC, MP4
+// atoms for M4A) at its current path, and can read a file's actual
+// currently-embedded tags back for verification. Implementations must
+// preserve any existing tag data not covered by TagInput/EmbeddedTags.
+type Tagger interface {
+	Tag(ctx context.Context, path string, meta TagInput) error
+	ReadEmbeddedTags(ctx context.Context, path string) (EmbeddedTags, error)
 }
