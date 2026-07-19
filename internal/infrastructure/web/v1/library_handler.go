@@ -31,6 +31,7 @@ type LibraryEntry struct {
 	ArtistMBID       string `json:"artist_mbid,omitempty"`
 
 	HasCoverArt bool `json:"has_cover_art,omitempty"`
+	HasLyrics   bool `json:"has_lyrics,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -74,6 +75,7 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 			ArtistMBID:       r.ArtistMBID,
 
 			HasCoverArt: r.CoverArtPath != "",
+			HasLyrics:   r.Lyrics != "" || r.SyncedLyrics != "",
 		})
 	}
 

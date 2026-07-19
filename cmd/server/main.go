@@ -64,7 +64,8 @@ func main() {
 		log.Fatalf("setting up cover art storage: %v", err)
 	}
 	coverArtClient := gateways.NewCoverArtClient(musicBrainzUserAgent)
-	enrichFile := usecases.NewEnrichFile(coverArtClient, coverArtStore, store)
+	lrclibClient := gateways.NewLRCLIBClient(musicBrainzUserAgent)
+	enrichFile := usecases.NewEnrichFile(coverArtClient, coverArtStore, lrclibClient, store)
 	enrichManager := usecases.NewEnrichManager(enrichFile, store)
 
 	libraryHandler := v1.NewLibraryHandler(store)
@@ -72,10 +73,11 @@ func main() {
 	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
 	enrichHandler := v1.NewEnrichHandler(enrichManager)
 	coverHandler := v1.NewCoverHandler(store)
+	lyricsHandler := v1.NewLyricsHandler(store)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

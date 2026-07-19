@@ -39,6 +39,15 @@ type TrackingStore interface {
 	// which would otherwise mean one full-table load per rendered
 	// thumbnail.
 	GetCoverArtPath(ctx context.Context, path string) (coverArtPath string, found bool, err error)
+
+	// RecordLyrics updates one file's stored plain and synced lyrics,
+	// without altering its fingerprint, status, or resolved metadata.
+	RecordLyrics(ctx context.Context, path string, lyrics string, syncedLyrics string) error
+
+	// GetLyrics returns one file's stored plain and synced lyrics (a
+	// single indexed lookup, not a full LoadAll) — used to serve lyrics
+	// on demand from the details view.
+	GetLyrics(ctx context.Context, path string) (lyrics string, syncedLyrics string, found bool, err error)
 }
 
 // BulkApply is the batched result of one refresh pass.
@@ -115,4 +124,13 @@ type IdentificationResult struct {
 // itself failed.
 type CoverArtLookup interface {
 	Lookup(ctx context.Context, releaseMBID, releaseGroupMBID string) ([]byte, error)
+}
+
+// LyricsLookup resolves an already-known artist/title/album/duration to
+// plain and, when available, LRC-timed synced lyrics via LRCLIB. found=false
+// with a nil error means no lyrics are available (not found, or the track
+// is instrumental) — distinct from a returned error, which means the lookup
+// itself failed.
+type LyricsLookup interface {
+	Lookup(ctx context.Context, artist, title, album string, durationSeconds int) (plainLyrics, syncedLyrics string, found bool, err error)
 }

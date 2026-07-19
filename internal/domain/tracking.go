@@ -48,6 +48,13 @@ type FileRecord struct {
 	// art, populated only after enrichment. Empty if not yet enriched or
 	// if no cover art was available for the release.
 	CoverArtPath string
+
+	// Lyrics and SyncedLyrics are populated only after enrichment. Empty
+	// if not yet enriched, or if LRCLIB had no entry or marked the track
+	// instrumental. SyncedLyrics may be empty even when Lyrics is set —
+	// many LRCLIB entries have only one or the other.
+	Lyrics       string
+	SyncedLyrics string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

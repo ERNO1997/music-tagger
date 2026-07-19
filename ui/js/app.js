@@ -8,6 +8,8 @@ const detailsOverlay = document.getElementById('details-overlay');
 const detailsFields = document.getElementById('details-fields');
 const detailsClose = document.getElementById('details-close');
 const detailsCover = document.getElementById('details-cover');
+const detailsLyricsSection = document.getElementById('details-lyrics-section');
+const detailsLyrics = document.getElementById('details-lyrics');
 
 const DETAILS_FIELD_LABELS = [
   ['path', 'Path'],
@@ -106,6 +108,7 @@ function renderRow(entry) {
   const checkboxCell = `<td class="px-4 py-3"><input type="checkbox" class="row-checkbox" data-path="${escapeHtml(entry.path)}" ${checked} /></td>`;
   const coverCell = renderCoverCell(entry);
   const metadataCell = renderMetadataCell(entry);
+  const lyricsCell = entry.has_lyrics ? '<span class="text-green-400" title="Lyrics available">&#9834;</span>' : '—';
 
   if (entry.error) {
     row.classList.add('text-red-400');
@@ -118,6 +121,7 @@ function renderRow(entry) {
       <td class="px-4 py-3">Error: ${escapeHtml(entry.error)}</td>
       <td class="px-4 py-3">${escapeHtml(statusLabel)}</td>
       <td class="px-4 py-3">${metadataCell}</td>
+      <td class="px-4 py-3">—</td>
     `;
     return row;
   }
@@ -131,6 +135,7 @@ function renderRow(entry) {
     <td class="px-4 py-3 font-mono text-xs truncate max-w-xs" title="${escapeHtml(entry.fingerprint)}">${escapeHtml(entry.fingerprint)}</td>
     <td class="px-4 py-3 ${statusClass}">${escapeHtml(statusLabel)}</td>
     <td class="px-4 py-3">${metadataCell}</td>
+    <td class="px-4 py-3">${lyricsCell}</td>
   `;
   return row;
 }
@@ -191,7 +196,7 @@ rowsEl.addEventListener('click', (e) => {
   openDetails(row.dataset.path);
 });
 
-function openDetails(path) {
+async function openDetails(path) {
   const entry = lastEntries.find((e) => e.path === path);
   if (!entry) {
     return;
@@ -221,7 +226,28 @@ function openDetails(path) {
     detailsFields.appendChild(row);
   }
 
+  detailsLyricsSection.classList.add('hidden');
+  detailsLyrics.textContent = '';
+  if (entry.has_lyrics) {
+    await loadLyrics(entry.path);
+  }
+
   detailsOverlay.classList.remove('hidden');
+}
+
+async function loadLyrics(path) {
+  try {
+    const res = await fetch(`/api/v1/library/lyrics?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      throw new Error(`request failed: ${res.status}`);
+    }
+    const data = await res.json();
+    detailsLyrics.textContent = data.plain_lyrics || data.synced_lyrics || '';
+    detailsLyricsSection.classList.remove('hidden');
+  } catch (err) {
+    detailsLyrics.textContent = `Failed to load lyrics: ${err.message}`;
+    detailsLyricsSection.classList.remove('hidden');
+  }
 }
 
 function closeDetails() {

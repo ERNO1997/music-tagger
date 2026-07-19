@@ -23,6 +23,7 @@
         <button
           id="enrich-button"
           class="rounded-md bg-purple-600 text-white text-sm font-medium px-4 py-2 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Resolves cover art and lyrics for the selected files"
           disabled
         >Enrich Selected</button>
         <button
@@ -31,7 +32,7 @@
         >Refresh</button>
       </div>
     </div>
-    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify (AcoustID/MusicBrainz) or enrich (cover art).</p>
+    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify (AcoustID/MusicBrainz) or enrich (cover art &amp; lyrics).</p>
 
     <div id="status" class="text-neutral-400 mb-4">Loading tracked files…</div>
 
@@ -47,6 +48,7 @@
             <th class="px-4 py-3">Fingerprint</th>
             <th class="px-4 py-3">Status</th>
             <th class="px-4 py-3">Artist / Album / Title / Track</th>
+            <th class="px-4 py-3">Lyrics</th>
           </tr>
         </thead>
         <tbody id="library-rows" class="divide-y divide-neutral-800"></tbody>
@@ -62,6 +64,10 @@
       </div>
       <img id="details-cover" class="hidden w-full max-h-64 object-contain bg-black" />
       <dl id="details-fields" class="px-5 py-4 space-y-2 text-sm"></dl>
+      <div id="details-lyrics-section" class="hidden px-5 py-4 border-t border-neutral-800">
+        <h3 class="text-neutral-400 text-xs uppercase mb-2">Lyrics</h3>
+        <pre id="details-lyrics" class="whitespace-pre-wrap font-sans text-sm max-h-64 overflow-y-auto text-neutral-200"></pre>
+      </div>
     </div>
   </div>
 
