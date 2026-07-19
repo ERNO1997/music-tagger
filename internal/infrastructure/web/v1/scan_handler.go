@@ -26,11 +26,16 @@ func NewScanHandler(refresh *usecases.RefreshManager) *ScanHandler {
 }
 
 // Trigger starts a background refresh. It returns 202 Accepted if started,
-// or 409 Conflict if one is already running.
+// or 409 Conflict if one is already running, or if a relocate job is
+// running — scan and relocate mutually exclude each other (see
+// RefreshManager.SetRelocateStatus).
 func (h *ScanHandler) Trigger(c *fiber.Ctx) error {
 	if err := h.refresh.Start(); err != nil {
 		if errors.Is(err, usecases.ErrRefreshInProgress) {
 			return fiber.NewError(fiber.StatusConflict, "a refresh is already in progress")
+		}
+		if errors.Is(err, usecases.ErrBlockedByRelocate) {
+			return fiber.NewError(fiber.StatusConflict, "a relocate job is in progress")
 		}
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}

@@ -35,6 +35,9 @@ type LibraryEntry struct {
 
 	Tagged   bool   `json:"tagged,omitempty"`
 	TagError string `json:"tag_error,omitempty"`
+
+	Relocated     bool   `json:"relocated,omitempty"`
+	RelocateError string `json:"relocate_error,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -82,6 +85,9 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 
 			Tagged:   r.Tagged,
 			TagError: r.TagError,
+
+			Relocated:     r.Relocated,
+			RelocateError: r.RelocateError,
 		})
 	}
 

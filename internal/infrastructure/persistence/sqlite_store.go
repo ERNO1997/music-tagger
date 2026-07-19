@@ -16,7 +16,8 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS files (
-	path              TEXT PRIMARY KEY,
+	id                INTEGER PRIMARY KEY AUTOINCREMENT,
+	path              TEXT NOT NULL UNIQUE,
 	format            TEXT NOT NULL,
 	fingerprint       TEXT NOT NULL,
 	duration_seconds  REAL NOT NULL DEFAULT 0,
@@ -68,6 +69,10 @@ func NewSQLiteStore(ctx context.Context, dbPath string) (*SQLiteStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating schema: %w", err)
 	}
+	if err := migratePrimaryKey(ctx, db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating primary key: %w", err)
+	}
 
 	return &SQLiteStore{db: db}, nil
 }
@@ -99,6 +104,8 @@ var columnMigrations = []struct {
 	{"synced_lyrics", "TEXT NOT NULL DEFAULT ''"},
 	{"tagged", "INTEGER NOT NULL DEFAULT 0"},
 	{"tag_error", "TEXT NOT NULL DEFAULT ''"},
+	{"relocated", "INTEGER NOT NULL DEFAULT 0"},
+	{"relocate_error", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrateColumns(ctx context.Context, db *sql.DB) error {
@@ -142,6 +149,122 @@ func existingColumns(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 	return existing, rows.Err()
 }
 
+// columnIsPrimaryKey reports whether the named column is (part of) the
+// files table's declared primary key.
+func columnIsPrimaryKey(ctx context.Context, db *sql.DB, column string) (bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info(files)")
+	if err != nil {
+		return false, fmt.Errorf("reading table info: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scanning table info row: %w", err)
+		}
+		if name == column {
+			return pk != 0, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// migratePrimaryKey rebuilds the files table if path is still its declared
+// primary key (the shape used before relocation was added). SQLite can't
+// alter an existing table's primary key in place, so this does a one-time
+// create-copy-drop-rename inside a transaction. It's a no-op against a
+// database that already has the surrogate-id shape, including a freshly
+// created one (which gets that shape directly from the schema constant).
+// migrateColumns must run first, so every column referenced here already
+// exists on the old table regardless of which prior version it started from.
+func migratePrimaryKey(ctx context.Context, db *sql.DB) error {
+	pathIsPK, err := columnIsPrimaryKey(ctx, db, "path")
+	if err != nil {
+		return err
+	}
+	if !pathIsPK {
+		return nil
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning primary-key migration transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE files_new (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			path               TEXT NOT NULL UNIQUE,
+			format             TEXT NOT NULL,
+			fingerprint        TEXT NOT NULL,
+			duration_seconds   REAL NOT NULL DEFAULT 0,
+			size               INTEGER NOT NULL,
+			mtime              INTEGER NOT NULL,
+			status             TEXT NOT NULL,
+			missing            INTEGER NOT NULL DEFAULT 0,
+			fingerprint_error  TEXT NOT NULL DEFAULT '',
+			artist             TEXT NOT NULL DEFAULT '',
+			album              TEXT NOT NULL DEFAULT '',
+			title              TEXT NOT NULL DEFAULT '',
+			track_number       INTEGER NOT NULL DEFAULT 0,
+			recording_mbid     TEXT NOT NULL DEFAULT '',
+			album_artist       TEXT NOT NULL DEFAULT '',
+			year               INTEGER NOT NULL DEFAULT 0,
+			disc_number        INTEGER NOT NULL DEFAULT 0,
+			total_discs        INTEGER NOT NULL DEFAULT 0,
+			total_tracks       INTEGER NOT NULL DEFAULT 0,
+			release_mbid       TEXT NOT NULL DEFAULT '',
+			release_group_mbid TEXT NOT NULL DEFAULT '',
+			artist_mbid        TEXT NOT NULL DEFAULT '',
+			cover_art_path     TEXT NOT NULL DEFAULT '',
+			lyrics             TEXT NOT NULL DEFAULT '',
+			synced_lyrics      TEXT NOT NULL DEFAULT '',
+			tagged             INTEGER NOT NULL DEFAULT 0,
+			tag_error          TEXT NOT NULL DEFAULT '',
+			relocated          INTEGER NOT NULL DEFAULT 0,
+			relocate_error     TEXT NOT NULL DEFAULT '',
+			updated_at         INTEGER NOT NULL
+		)
+	`); err != nil {
+		return fmt.Errorf("creating rebuilt files table: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO files_new (
+			path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+			artist, album, title, track_number, recording_mbid,
+			album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error, updated_at
+		)
+		SELECT
+			path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+			artist, album, title, track_number, recording_mbid,
+			album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error, updated_at
+		FROM files
+	`); err != nil {
+		return fmt.Errorf("copying rows into rebuilt files table: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DROP TABLE files`); err != nil {
+		return fmt.Errorf("dropping old files table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE files_new RENAME TO files`); err != nil {
+		return fmt.Errorf("renaming rebuilt files table: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing primary-key migration: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
@@ -151,7 +274,7 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
 		FROM files
 	`)
 	if err != nil {
@@ -163,17 +286,18 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 	for rows.Next() {
 		var rec domain.FileRecord
 		var format, status string
-		var missing, tagged int
+		var missing, tagged, relocated int
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError); err != nil {
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
 		rec.Status = domain.TrackingStatus(status)
 		rec.Missing = missing != 0
 		rec.Tagged = tagged != 0
+		rec.Relocated = relocated != 0
 		result[rec.Path] = rec
 	}
 	if err := rows.Err(); err != nil {
@@ -190,18 +314,18 @@ func (s *SQLiteStore) Get(ctx context.Context, path string) (domain.FileRecord, 
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
 		FROM files
 		WHERE path = ?
 	`, path)
 
 	var rec domain.FileRecord
 	var format, status string
-	var missing, tagged int
+	var missing, tagged, relocated int
 	err := row.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 		&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 		&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-		&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError)
+		&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError)
 	if err == sql.ErrNoRows {
 		return domain.FileRecord{}, false, nil
 	}
@@ -212,6 +336,7 @@ func (s *SQLiteStore) Get(ctx context.Context, path string) (domain.FileRecord, 
 	rec.Status = domain.TrackingStatus(status)
 	rec.Missing = missing != 0
 	rec.Tagged = tagged != 0
+	rec.Relocated = relocated != 0
 	return rec, true, nil
 }
 
@@ -315,10 +440,11 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 	now := time.Now().Unix()
 
 	if result.Status == domain.StatusIdentified {
-		// cover_art_path, lyrics/synced_lyrics, and tagged/tag_error are
-		// reset here too: a re-identification can resolve to a different
-		// release/recording than before, which would make any previously
-		// stored enrichment or on-disk tagging stale.
+		// cover_art_path, lyrics/synced_lyrics, tagged/tag_error, and
+		// relocated/relocate_error are reset here too: a re-identification
+		// can resolve to a different release/recording than before, which
+		// would make any previously stored enrichment, on-disk tagging, or
+		// relocation outcome stale.
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE files SET
 				status = ?,
@@ -340,6 +466,8 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 				synced_lyrics = '',
 				tagged = 0,
 				tag_error = '',
+				relocated = 0,
+				relocate_error = '',
 				updated_at = ?
 			WHERE path = ?
 		`, string(result.Status), result.Metadata.Artist, result.Metadata.Album, result.Metadata.Title,
@@ -354,7 +482,7 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, cover_art_path = '', lyrics = '', synced_lyrics = '', tagged = 0, tag_error = '', updated_at = ? WHERE path = ?`, string(result.Status), now, path)
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, cover_art_path = '', lyrics = '', synced_lyrics = '', tagged = 0, tag_error = '', relocated = 0, relocate_error = '', updated_at = ? WHERE path = ?`, string(result.Status), now, path)
 	if err != nil {
 		return fmt.Errorf("recording identification outcome for %s: %w", path, err)
 	}
@@ -422,6 +550,42 @@ func (s *SQLiteStore) RecordTagged(ctx context.Context, path string, tagged bool
 	_, err := s.db.ExecContext(ctx, `UPDATE files SET tagged = ?, tag_error = ?, updated_at = ? WHERE path = ?`, taggedInt, tagErr, now, path)
 	if err != nil {
 		return fmt.Errorf("recording tagged outcome for %s: %w", path, err)
+	}
+	return nil
+}
+
+// RecordFileStat updates one file's stored size and modification time,
+// without altering any other field.
+func (s *SQLiteStore) RecordFileStat(ctx context.Context, path string, size int64, modTime int64) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET size = ?, mtime = ?, updated_at = ? WHERE path = ?`, size, modTime, now, path)
+	if err != nil {
+		return fmt.Errorf("recording file stat for %s: %w", path, err)
+	}
+	return nil
+}
+
+// RecordRelocation updates one file's path to its new, post-relocation
+// location and marks it relocated, in a single commit, without altering
+// any other field. It identifies the row by its old path value, same as
+// every other per-file update — unaffected by path no longer being the
+// declared primary key.
+func (s *SQLiteStore) RecordRelocation(ctx context.Context, oldPath, newPath string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET path = ?, relocated = 1, relocate_error = '', updated_at = ? WHERE path = ?`, newPath, now, oldPath)
+	if err != nil {
+		return fmt.Errorf("recording relocation of %s to %s: %w", oldPath, newPath, err)
+	}
+	return nil
+}
+
+// RecordRelocationFailure updates one file's relocation outcome to failed
+// with the given reason, without altering its path or any other field.
+func (s *SQLiteStore) RecordRelocationFailure(ctx context.Context, path string, relocateErr string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET relocated = 0, relocate_error = ?, updated_at = ? WHERE path = ?`, relocateErr, now, path)
+	if err != nil {
+		return fmt.Errorf("recording relocation failure for %s: %w", path, err)
 	}
 	return nil
 }

@@ -3,7 +3,7 @@ package v1
 import "github.com/gofiber/fiber/v2"
 
 // RegisterRoutes wires the v1 API surface onto app.
-func RegisterRoutes(app *fiber.App, library *LibraryHandler, scan *ScanHandler, identify *IdentifyHandler, enrich *EnrichHandler, cover *CoverHandler, lyrics *LyricsHandler, tag *TagHandler, embeddedTags *EmbeddedTagsHandler) {
+func RegisterRoutes(app *fiber.App, library *LibraryHandler, scan *ScanHandler, identify *IdentifyHandler, enrich *EnrichHandler, cover *CoverHandler, lyrics *LyricsHandler, tag *TagHandler, embeddedTags *EmbeddedTagsHandler, relocate *RelocateHandler) {
 	api := app.Group("/api/v1")
 	api.Get("/library", library.List)
 	api.Post("/library/scan", scan.Trigger)
@@ -17,4 +17,6 @@ func RegisterRoutes(app *fiber.App, library *LibraryHandler, scan *ScanHandler, 
 	api.Post("/library/tag", tag.Trigger)
 	api.Get("/library/tag/status", tag.Status)
 	api.Get("/library/tags", embeddedTags.Get)
+	api.Post("/library/relocate", relocate.Trigger)
+	api.Get("/library/relocate/status", relocate.Status)
 }

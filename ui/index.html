@@ -33,12 +33,18 @@
           disabled
         >Tag Selected</button>
         <button
+          id="relocate-button"
+          class="rounded-md bg-orange-600 text-white text-sm font-medium px-4 py-2 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Moves the selected files into Artist/Album/Track - Title folders (requires tagging first)"
+          disabled
+        >Relocate Selected</button>
+        <button
           id="refresh-button"
           class="rounded-md bg-neutral-100 text-neutral-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
         >Refresh</button>
       </div>
     </div>
-    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify (AcoustID/MusicBrainz), enrich (cover art &amp; lyrics), or tag (write it all into the file itself).</p>
+    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify (AcoustID/MusicBrainz), enrich (cover art &amp; lyrics), tag (write it all into the file itself), or relocate (move into Artist/Album/Track folders).</p>
 
     <div id="status" class="text-neutral-400 mb-4">Loading tracked files…</div>
 
@@ -56,6 +62,7 @@
             <th class="px-4 py-3">Artist / Album / Title / Track</th>
             <th class="px-4 py-3">Lyrics</th>
             <th class="px-4 py-3">Tagged</th>
+            <th class="px-4 py-3">Relocated</th>
           </tr>
         </thead>
         <tbody id="library-rows" class="divide-y divide-neutral-800"></tbody>

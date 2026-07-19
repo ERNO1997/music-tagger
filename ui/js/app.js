@@ -4,6 +4,7 @@ const refreshButton = document.getElementById('refresh-button');
 const identifyButton = document.getElementById('identify-button');
 const enrichButton = document.getElementById('enrich-button');
 const tagButton = document.getElementById('tag-button');
+const relocateButton = document.getElementById('relocate-button');
 const selectAllCheckbox = document.getElementById('select-all');
 const detailsOverlay = document.getElementById('details-overlay');
 const detailsFields = document.getElementById('details-fields');
@@ -67,6 +68,9 @@ let enrichPollTimer = null;
 let enrichRunning = false;
 let tagPollTimer = null;
 let tagRunning = false;
+let relocatePollTimer = null;
+let relocateRunning = false;
+let scanRunning = false;
 let lastEntries = [];
 
 async function loadLibrary() {
@@ -101,6 +105,7 @@ function renderTable(entries) {
     updateIdentifyButton();
     updateEnrichButton();
     updateTagButton();
+    updateRelocateButton();
     return;
   }
 
@@ -113,6 +118,7 @@ function renderTable(entries) {
   updateIdentifyButton();
   updateEnrichButton();
   updateTagButton();
+  updateRelocateButton();
 }
 
 function renderRow(entry) {
@@ -127,6 +133,7 @@ function renderRow(entry) {
   const metadataCell = renderMetadataCell(entry);
   const lyricsCell = entry.has_lyrics ? '<span class="text-green-400" title="Lyrics available">&#9834;</span>' : '—';
   const taggedCell = renderTaggedCell(entry);
+  const relocatedCell = renderRelocatedCell(entry);
 
   if (entry.error) {
     row.classList.add('text-red-400');
@@ -141,6 +148,7 @@ function renderRow(entry) {
       <td class="px-4 py-3">${metadataCell}</td>
       <td class="px-4 py-3">—</td>
       <td class="px-4 py-3">${taggedCell}</td>
+      <td class="px-4 py-3">${relocatedCell}</td>
     `;
     return row;
   }
@@ -156,6 +164,7 @@ function renderRow(entry) {
     <td class="px-4 py-3">${metadataCell}</td>
     <td class="px-4 py-3">${lyricsCell}</td>
     <td class="px-4 py-3">${taggedCell}</td>
+    <td class="px-4 py-3">${relocatedCell}</td>
   `;
   return row;
 }
@@ -166,6 +175,16 @@ function renderTaggedCell(entry) {
   }
   if (entry.tag_error) {
     return `<span class="text-red-400" title="Tagging failed: ${escapeHtml(entry.tag_error)}">&#10007;</span>`;
+  }
+  return '—';
+}
+
+function renderRelocatedCell(entry) {
+  if (entry.relocated) {
+    return '<span class="text-green-400" title="Relocated">&#10003;</span>';
+  }
+  if (entry.relocate_error) {
+    return `<span class="text-red-400" title="Relocation failed: ${escapeHtml(entry.relocate_error)}">&#10007;</span>`;
   }
   return '—';
 }
@@ -212,6 +231,7 @@ rowsEl.addEventListener('change', (e) => {
   updateIdentifyButton();
   updateEnrichButton();
   updateTagButton();
+  updateRelocateButton();
 });
 
 rowsEl.addEventListener('click', (e) => {
@@ -350,6 +370,7 @@ selectAllCheckbox.addEventListener('change', () => {
   updateIdentifyButton();
   updateEnrichButton();
   updateTagButton();
+  updateRelocateButton();
 });
 
 function updateIdentifyButton() {
@@ -370,6 +391,25 @@ function updateTagButton() {
   tagButton.disabled = tagRunning || selectedPaths.size === 0;
   if (!tagRunning) {
     tagButton.textContent = 'Tag Selected';
+  }
+}
+
+// Relocate and scan mutually exclude each other (a scan walking /music
+// concurrently with a file being moved could see it as both missing at
+// its old location and new at its new one) — the relocate action is
+// disabled while a scan is running, and the refresh trigger is disabled
+// while a relocate job is running, mirroring what the API itself rejects.
+function updateRelocateButton() {
+  relocateButton.disabled = relocateRunning || scanRunning || selectedPaths.size === 0;
+  if (!relocateRunning) {
+    relocateButton.textContent = 'Relocate Selected';
+  }
+}
+
+function updateRefreshButton() {
+  refreshButton.disabled = scanRunning || relocateRunning;
+  if (!scanRunning) {
+    refreshButton.textContent = 'Refresh';
   }
 }
 
@@ -405,17 +445,25 @@ async function fetchTagStatus() {
   return res.json();
 }
 
+async function fetchRelocateStatus() {
+  const res = await fetch('/api/v1/library/relocate/status');
+  if (!res.ok) {
+    throw new Error(`status request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 function setScanningUI(running, processed, total) {
-  refreshButton.disabled = running;
+  scanRunning = running;
   if (running) {
     refreshButton.textContent = 'Scanning…';
     statusEl.textContent = total > 0
       ? `Scanning… ${processed}/${total} fingerprinted`
       : 'Scanning…';
     statusEl.className = 'text-neutral-400 mb-4';
-  } else {
-    refreshButton.textContent = 'Refresh';
   }
+  updateRefreshButton();
+  updateRelocateButton();
 }
 
 function setIdentifyingUI(running, processed, total) {
@@ -439,6 +487,15 @@ function setTaggingUI(running, processed, total) {
   updateTagButton();
   if (running) {
     tagButton.textContent = total > 0 ? `Tagging ${processed}/${total}…` : 'Tagging…';
+  }
+}
+
+function setRelocatingUI(running, processed, total) {
+  relocateRunning = running;
+  updateRelocateButton();
+  updateRefreshButton();
+  if (running) {
+    relocateButton.textContent = total > 0 ? `Relocating ${processed}/${total}…` : 'Relocating…';
   }
 }
 
@@ -518,6 +575,26 @@ function startTagPolling() {
     } catch (err) {
       clearInterval(tagPollTimer);
       tagPollTimer = null;
+    }
+  }, 1000);
+}
+
+function startRelocatePolling() {
+  if (relocatePollTimer) {
+    return;
+  }
+  relocatePollTimer = setInterval(async () => {
+    try {
+      const status = await fetchRelocateStatus();
+      setRelocatingUI(status.running, status.processed, status.total);
+      await loadLibrary();
+      if (!status.running) {
+        clearInterval(relocatePollTimer);
+        relocatePollTimer = null;
+      }
+    } catch (err) {
+      clearInterval(relocatePollTimer);
+      relocatePollTimer = null;
     }
   }, 1000);
 }
@@ -607,10 +684,34 @@ async function triggerTag() {
   }
 }
 
+async function triggerRelocate() {
+  const paths = [...selectedPaths];
+  if (paths.length === 0) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/v1/library/relocate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+    if (res.status !== 202 && res.status !== 409) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `relocate request failed: ${res.status}`);
+    }
+    setRelocatingUI(true, 0, paths.length);
+    startRelocatePolling();
+  } catch (err) {
+    statusEl.textContent = `Failed to start relocation: ${err.message}`;
+    statusEl.className = 'text-red-400 mb-4';
+  }
+}
+
 refreshButton.addEventListener('click', triggerRefresh);
 identifyButton.addEventListener('click', triggerIdentify);
 enrichButton.addEventListener('click', triggerEnrich);
 tagButton.addEventListener('click', triggerTag);
+relocateButton.addEventListener('click', triggerRelocate);
 
 (async function init() {
   await loadLibrary();
@@ -652,6 +753,16 @@ tagButton.addEventListener('click', triggerTag);
     }
   } catch (err) {
     // Status endpoint unreachable — tag button stays disabled until a
+    // selection is made anyway.
+  }
+  try {
+    const relocateStatus = await fetchRelocateStatus();
+    setRelocatingUI(relocateStatus.running, relocateStatus.processed, relocateStatus.total);
+    if (relocateStatus.running) {
+      startRelocatePolling();
+    }
+  } catch (err) {
+    // Status endpoint unreachable — relocate button stays disabled until a
     // selection is made anyway.
   }
 })();

@@ -17,6 +17,15 @@ type JobStatus struct {
 	Total     int
 }
 
+// StatusChecker reports whether some other background job is currently
+// running, used to gate mutual exclusion between two otherwise-independent
+// job types (e.g. scan and relocate) whose concurrent execution isn't
+// safe. Every *Manager type already satisfies this via its existing
+// Status() method.
+type StatusChecker interface {
+	Status() JobStatus
+}
+
 // JobManager coordinates a single background unit of work at a time and
 // exposes its live progress for polling. This is the shared concurrency
 // primitive behind both the scan refresh and the identify job: extracted

@@ -65,6 +65,18 @@ func (t *TagFile) Tag(ctx context.Context, path string) (skipped bool, err error
 		return false, fmt.Errorf("tagging %s: %w", path, tagErr)
 	}
 
+	// Writing tags changes the file's own size and modification time on
+	// disk. Refresh the stored baseline to match, so the next scan sees
+	// this file as unchanged rather than concluding it was modified
+	// (which would reset its status and resolved metadata to blank).
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return false, fmt.Errorf("tagging %s: stat after successful write: %w", path, statErr)
+	}
+	if err := t.store.RecordFileStat(ctx, path, info.Size(), info.ModTime().Unix()); err != nil {
+		return false, fmt.Errorf("tagging %s: recording updated file stat: %w", path, err)
+	}
+
 	return false, t.store.RecordTagged(ctx, path, true, "")
 }
 

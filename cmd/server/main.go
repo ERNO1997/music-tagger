@@ -72,6 +72,11 @@ func main() {
 	tagFile := usecases.NewTagFile(tagger, store)
 	tagManager := usecases.NewTagManager(tagFile)
 
+	relocator := filestat.NewPathRelocator(musicRoot)
+	relocateFile := usecases.NewRelocateFile(relocator, store)
+	relocateManager := usecases.NewRelocateManager(relocateFile, refreshManager)
+	refreshManager.SetRelocateStatus(relocateManager)
+
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
 	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
@@ -80,10 +85,11 @@ func main() {
 	lyricsHandler := v1.NewLyricsHandler(store)
 	tagHandler := v1.NewTagHandler(tagManager)
 	embeddedTagsHandler := v1.NewEmbeddedTagsHandler(tagFile)
+	relocateHandler := v1.NewRelocateHandler(relocateManager)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

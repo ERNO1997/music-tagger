@@ -62,6 +62,15 @@ type FileRecord struct {
 	// and failed.
 	Tagged   bool
 	TagError string
+
+	// Relocated and RelocateError reflect the outcome of the most recent
+	// attempt to physically move the file into the canonical
+	// Artist/Album/Track hierarchy. RelocateError is non-empty only when a
+	// relocation was attempted and failed. On success, Path already
+	// reflects the file's new location — relocation updates the same
+	// record rather than replacing it.
+	Relocated     bool
+	RelocateError string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

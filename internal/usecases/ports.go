@@ -59,6 +59,24 @@ type TrackingStore interface {
 	// fingerprint, status, resolved metadata, cover art path, or lyrics.
 	// tagErr is empty on a successful tag write.
 	RecordTagged(ctx context.Context, path string, tagged bool, tagErr string) error
+
+	// RecordFileStat updates one file's stored size and modification time,
+	// without altering any other field. Used after a successful tag write:
+	// writing tags changes the file's own size/mtime on disk, and without
+	// this, the next scan would compare its stale pre-tag baseline against
+	// the file's real post-tag stat, conclude the file "changed", and reset
+	// its status and resolved metadata to blank.
+	RecordFileStat(ctx context.Context, path string, size int64, modTime int64) error
+
+	// RecordRelocation updates one file's path to its new, post-relocation
+	// location and marks it relocated, in a single commit, without
+	// altering any other field.
+	RecordRelocation(ctx context.Context, oldPath, newPath string) error
+
+	// RecordRelocationFailure updates one file's relocation outcome to
+	// failed with the given reason, without altering its path or any
+	// other field.
+	RecordRelocationFailure(ctx context.Context, path string, relocateErr string) error
 }
 
 // BulkApply is the batched result of one refresh pass.
@@ -193,4 +211,35 @@ type EmbeddedTags struct {
 type Tagger interface {
 	Tag(ctx context.Context, path string, meta TagInput) error
 	ReadEmbeddedTags(ctx context.Context, path string) (EmbeddedTags, error)
+}
+
+// RelocateInput is the resolved metadata needed to compute an
+// already-identified-and-tagged file's canonical destination path.
+type RelocateInput struct {
+	Artist      string
+	Album       string
+	Title       string
+	TrackNumber int
+
+	// Year prefixes the album directory name ("{Year} - {Album}") when
+	// positive. 0 means the release had no usable date (see
+	// RecordingMetadata.Year) — the album directory is then just the
+	// album name, with no prefix.
+	Year int
+}
+
+// Relocator physically moves an audio file into the canonical
+// Artist/Album/Track hierarchy, sanitizing path segments before any
+// filesystem call. Implementations must leave the source file untouched
+// on any error.
+type Relocator interface {
+	// Relocate moves the file at path to its computed destination and
+	// returns the new path. path is left untouched if an error is
+	// returned (including a destination collision).
+	Relocate(ctx context.Context, path string, meta RelocateInput) (newPath string, err error)
+
+	// Undo moves a file from currentPath back to originalPath — a bare
+	// move with no sanitization or directory creation, used as a
+	// best-effort rollback when recording a successful relocation fails.
+	Undo(ctx context.Context, currentPath, originalPath string) error
 }
