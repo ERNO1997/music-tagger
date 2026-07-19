@@ -21,12 +21,17 @@
           disabled
         >Identify Selected</button>
         <button
+          id="enrich-button"
+          class="rounded-md bg-purple-600 text-white text-sm font-medium px-4 py-2 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+        >Enrich Selected</button>
+        <button
           id="refresh-button"
           class="rounded-md bg-neutral-100 text-neutral-900 text-sm font-medium px-4 py-2 hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
         >Refresh</button>
       </div>
     </div>
-    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify via AcoustID/MusicBrainz.</p>
+    <p class="text-neutral-400 mb-6">Local library tracking — select rows to identify (AcoustID/MusicBrainz) or enrich (cover art).</p>
 
     <div id="status" class="text-neutral-400 mb-4">Loading tracked files…</div>
 
@@ -35,6 +40,7 @@
         <thead class="bg-neutral-900 text-neutral-400 uppercase text-xs">
           <tr>
             <th class="px-4 py-3"><input type="checkbox" id="select-all" /></th>
+            <th class="px-4 py-3">Cover</th>
             <th class="px-4 py-3">Path</th>
             <th class="px-4 py-3">Format</th>
             <th class="px-4 py-3">Duration</th>
@@ -54,6 +60,7 @@
         <h2 class="text-lg font-semibold">File Details</h2>
         <button id="details-close" class="text-neutral-400 hover:text-neutral-100 text-xl leading-none">&times;</button>
       </div>
+      <img id="details-cover" class="hidden w-full max-h-64 object-contain bg-black" />
       <dl id="details-fields" class="px-5 py-4 space-y-2 text-sm"></dl>
     </div>
   </div>

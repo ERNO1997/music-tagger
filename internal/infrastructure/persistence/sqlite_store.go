@@ -94,6 +94,7 @@ var columnMigrations = []struct {
 	{"release_mbid", "TEXT NOT NULL DEFAULT ''"},
 	{"release_group_mbid", "TEXT NOT NULL DEFAULT ''"},
 	{"artist_mbid", "TEXT NOT NULL DEFAULT ''"},
+	{"cover_art_path", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrateColumns(ctx context.Context, db *sql.DB) error {
@@ -145,7 +146,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
-		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+		       cover_art_path
 		FROM files
 	`)
 	if err != nil {
@@ -160,7 +162,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		var missing int
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
-			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID); err != nil {
+			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
+			&rec.CoverArtPath); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
@@ -191,8 +194,8 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 		// any prior identification is stale and must not linger against
 		// different content.
 		upsertStmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', '', 0, 0, 0, 0, '', '', '', ?)
+			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid, cover_art_path, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', '', 0, 0, 0, 0, '', '', '', '', ?)
 			ON CONFLICT(path) DO UPDATE SET
 				format = excluded.format,
 				fingerprint = excluded.fingerprint,
@@ -215,6 +218,7 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 				release_mbid = '',
 				release_group_mbid = '',
 				artist_mbid = '',
+				cover_art_path = '',
 				updated_at = excluded.updated_at
 		`)
 		if err != nil {
@@ -272,6 +276,9 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 	now := time.Now().Unix()
 
 	if result.Status == domain.StatusIdentified {
+		// cover_art_path is reset here too: a re-identification can resolve
+		// to a different release than before, which would make any
+		// previously stored cover art stale.
 		_, err := s.db.ExecContext(ctx, `
 			UPDATE files SET
 				status = ?,
@@ -288,6 +295,7 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 				release_mbid = ?,
 				release_group_mbid = ?,
 				artist_mbid = ?,
+				cover_art_path = '',
 				updated_at = ?
 			WHERE path = ?
 		`, string(result.Status), result.Metadata.Artist, result.Metadata.Album, result.Metadata.Title,
@@ -302,9 +310,34 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 		return nil
 	}
 
-	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, updated_at = ? WHERE path = ?`, string(result.Status), now, path)
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET status = ?, cover_art_path = '', updated_at = ? WHERE path = ?`, string(result.Status), now, path)
 	if err != nil {
 		return fmt.Errorf("recording identification outcome for %s: %w", path, err)
 	}
 	return nil
+}
+
+// RecordCoverArt updates one file's stored cover art path, without
+// altering its fingerprint, status, or resolved metadata.
+func (s *SQLiteStore) RecordCoverArt(ctx context.Context, path string, coverArtPath string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET cover_art_path = ?, updated_at = ? WHERE path = ?`, coverArtPath, now, path)
+	if err != nil {
+		return fmt.Errorf("recording cover art for %s: %w", path, err)
+	}
+	return nil
+}
+
+// GetCoverArtPath returns one file's stored cover art path via a single
+// indexed lookup, for serving cover images without loading the whole table.
+func (s *SQLiteStore) GetCoverArtPath(ctx context.Context, path string) (string, bool, error) {
+	var coverArtPath string
+	err := s.db.QueryRowContext(ctx, `SELECT cover_art_path FROM files WHERE path = ?`, path).Scan(&coverArtPath)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("querying cover art path for %s: %w", path, err)
+	}
+	return coverArtPath, coverArtPath != "", nil
 }

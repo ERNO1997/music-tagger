@@ -35,14 +35,19 @@ type FileRecord struct {
 
 	// Extended resolved metadata, also populated only once identified.
 	// Year is 0 when the release had no usable date.
-	AlbumArtist     string
-	Year            int
-	DiscNumber      int
-	TotalDiscs      int
-	TotalTracks     int
-	ReleaseMBID     string
+	AlbumArtist      string
+	Year             int
+	DiscNumber       int
+	TotalDiscs       int
+	TotalTracks      int
+	ReleaseMBID      string
 	ReleaseGroupMBID string
-	ArtistMBID      string
+	ArtistMBID       string
+
+	// CoverArtPath is the on-disk path to this file's downloaded cover
+	// art, populated only after enrichment. Empty if not yet enriched or
+	// if no cover art was available for the release.
+	CoverArtPath string
 }
 
 // EffectiveStatus returns the externally-visible status: StatusMissing when

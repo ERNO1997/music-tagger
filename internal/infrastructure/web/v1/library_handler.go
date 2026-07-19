@@ -29,6 +29,8 @@ type LibraryEntry struct {
 	ReleaseMBID      string `json:"release_mbid,omitempty"`
 	ReleaseGroupMBID string `json:"release_group_mbid,omitempty"`
 	ArtistMBID       string `json:"artist_mbid,omitempty"`
+
+	HasCoverArt bool `json:"has_cover_art,omitempty"`
 }
 
 // LibraryHandler serves the current tracked state read directly from the
@@ -70,6 +72,8 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 			ReleaseMBID:      r.ReleaseMBID,
 			ReleaseGroupMBID: r.ReleaseGroupMBID,
 			ArtistMBID:       r.ArtistMBID,
+
+			HasCoverArt: r.CoverArtPath != "",
 		})
 	}
 

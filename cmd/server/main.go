@@ -6,10 +6,12 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/filesystem"
 
+	"music-tagger/internal/infrastructure/covers"
 	"music-tagger/internal/infrastructure/filestat"
 	"music-tagger/internal/infrastructure/gateways"
 	"music-tagger/internal/infrastructure/persistence"
@@ -57,13 +59,23 @@ func main() {
 		identifyConfigErr = fmt.Errorf("identification is not configured: set ACOUSTID_API_KEY and MUSICBRAINZ_USER_AGENT")
 	}
 
+	coverArtStore, err := covers.NewStore(filepath.Dir(dbPath))
+	if err != nil {
+		log.Fatalf("setting up cover art storage: %v", err)
+	}
+	coverArtClient := gateways.NewCoverArtClient(musicBrainzUserAgent)
+	enrichFile := usecases.NewEnrichFile(coverArtClient, coverArtStore, store)
+	enrichManager := usecases.NewEnrichManager(enrichFile, store)
+
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
 	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
+	enrichHandler := v1.NewEnrichHandler(enrichManager)
+	coverHandler := v1.NewCoverHandler(store)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

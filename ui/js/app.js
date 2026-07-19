@@ -2,10 +2,12 @@ const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('library-rows');
 const refreshButton = document.getElementById('refresh-button');
 const identifyButton = document.getElementById('identify-button');
+const enrichButton = document.getElementById('enrich-button');
 const selectAllCheckbox = document.getElementById('select-all');
 const detailsOverlay = document.getElementById('details-overlay');
 const detailsFields = document.getElementById('details-fields');
 const detailsClose = document.getElementById('details-close');
+const detailsCover = document.getElementById('details-cover');
 
 const DETAILS_FIELD_LABELS = [
   ['path', 'Path'],
@@ -46,6 +48,8 @@ const selectedPaths = new Set();
 let scanPollTimer = null;
 let identifyPollTimer = null;
 let identifyRunning = false;
+let enrichPollTimer = null;
+let enrichRunning = false;
 let lastEntries = [];
 
 async function loadLibrary() {
@@ -78,6 +82,7 @@ function renderTable(entries) {
     statusEl.textContent = 'No tracked files yet.';
     statusEl.className = 'text-neutral-400 mb-4';
     updateIdentifyButton();
+    updateEnrichButton();
     return;
   }
 
@@ -88,6 +93,7 @@ function renderTable(entries) {
     rowsEl.appendChild(renderRow(entry));
   }
   updateIdentifyButton();
+  updateEnrichButton();
 }
 
 function renderRow(entry) {
@@ -98,12 +104,14 @@ function renderRow(entry) {
   const statusClass = STATUS_CLASSES[entry.status] || '';
   const checked = selectedPaths.has(entry.path) ? 'checked' : '';
   const checkboxCell = `<td class="px-4 py-3"><input type="checkbox" class="row-checkbox" data-path="${escapeHtml(entry.path)}" ${checked} /></td>`;
+  const coverCell = renderCoverCell(entry);
   const metadataCell = renderMetadataCell(entry);
 
   if (entry.error) {
     row.classList.add('text-red-400');
     row.innerHTML = `
       ${checkboxCell}
+      <td class="px-4 py-3">${coverCell}</td>
       <td class="px-4 py-3 font-mono text-xs">${escapeHtml(entry.path)}</td>
       <td class="px-4 py-3 uppercase">${escapeHtml(entry.format)}</td>
       <td class="px-4 py-3">—</td>
@@ -116,6 +124,7 @@ function renderRow(entry) {
 
   row.innerHTML = `
     ${checkboxCell}
+    <td class="px-4 py-3">${coverCell}</td>
     <td class="px-4 py-3 font-mono text-xs">${escapeHtml(entry.path)}</td>
     <td class="px-4 py-3 uppercase">${escapeHtml(entry.format)}</td>
     <td class="px-4 py-3">${formatDuration(entry.duration_seconds)}</td>
@@ -124,6 +133,14 @@ function renderRow(entry) {
     <td class="px-4 py-3">${metadataCell}</td>
   `;
   return row;
+}
+
+function renderCoverCell(entry) {
+  if (!entry.has_cover_art) {
+    return '<div class="w-10 h-10 rounded bg-neutral-800"></div>';
+  }
+  const src = `/api/v1/library/cover?path=${encodeURIComponent(entry.path)}`;
+  return `<img src="${src}" class="w-10 h-10 rounded object-cover" alt="" />`;
 }
 
 function renderMetadataCell(entry) {
@@ -158,6 +175,7 @@ rowsEl.addEventListener('change', (e) => {
     selectedPaths.delete(path);
   }
   updateIdentifyButton();
+  updateEnrichButton();
 });
 
 rowsEl.addEventListener('click', (e) => {
@@ -177,6 +195,14 @@ function openDetails(path) {
   const entry = lastEntries.find((e) => e.path === path);
   if (!entry) {
     return;
+  }
+
+  if (entry.has_cover_art) {
+    detailsCover.src = `/api/v1/library/cover?path=${encodeURIComponent(entry.path)}`;
+    detailsCover.classList.remove('hidden');
+  } else {
+    detailsCover.removeAttribute('src');
+    detailsCover.classList.add('hidden');
   }
 
   detailsFields.innerHTML = '';
@@ -220,12 +246,20 @@ selectAllCheckbox.addEventListener('change', () => {
     }
   }
   updateIdentifyButton();
+  updateEnrichButton();
 });
 
 function updateIdentifyButton() {
   identifyButton.disabled = identifyRunning || selectedPaths.size === 0;
   if (!identifyRunning) {
     identifyButton.textContent = 'Identify Selected';
+  }
+}
+
+function updateEnrichButton() {
+  enrichButton.disabled = enrichRunning || selectedPaths.size === 0;
+  if (!enrichRunning) {
+    enrichButton.textContent = 'Enrich Selected';
   }
 }
 
@@ -239,6 +273,14 @@ async function fetchScanStatus() {
 
 async function fetchIdentifyStatus() {
   const res = await fetch('/api/v1/library/identify/status');
+  if (!res.ok) {
+    throw new Error(`status request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function fetchEnrichStatus() {
+  const res = await fetch('/api/v1/library/enrich/status');
   if (!res.ok) {
     throw new Error(`status request failed: ${res.status}`);
   }
@@ -263,6 +305,14 @@ function setIdentifyingUI(running, processed, total) {
   updateIdentifyButton();
   if (running) {
     identifyButton.textContent = total > 0 ? `Identifying ${processed}/${total}…` : 'Identifying…';
+  }
+}
+
+function setEnrichingUI(running, processed, total) {
+  enrichRunning = running;
+  updateEnrichButton();
+  if (running) {
+    enrichButton.textContent = total > 0 ? `Enriching ${processed}/${total}…` : 'Enriching…';
   }
 }
 
@@ -306,6 +356,26 @@ function startIdentifyPolling() {
   }, 1000);
 }
 
+function startEnrichPolling() {
+  if (enrichPollTimer) {
+    return;
+  }
+  enrichPollTimer = setInterval(async () => {
+    try {
+      const status = await fetchEnrichStatus();
+      setEnrichingUI(status.running, status.processed, status.total);
+      await loadLibrary();
+      if (!status.running) {
+        clearInterval(enrichPollTimer);
+        enrichPollTimer = null;
+      }
+    } catch (err) {
+      clearInterval(enrichPollTimer);
+      enrichPollTimer = null;
+    }
+  }, 1000);
+}
+
 async function triggerRefresh() {
   try {
     const res = await fetch('/api/v1/library/scan', { method: 'POST' });
@@ -345,8 +415,32 @@ async function triggerIdentify() {
   }
 }
 
+async function triggerEnrich() {
+  const paths = [...selectedPaths];
+  if (paths.length === 0) {
+    return;
+  }
+  try {
+    const res = await fetch('/api/v1/library/enrich', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+    if (res.status !== 202 && res.status !== 409) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `enrich request failed: ${res.status}`);
+    }
+    setEnrichingUI(true, 0, paths.length);
+    startEnrichPolling();
+  } catch (err) {
+    statusEl.textContent = `Failed to start enrichment: ${err.message}`;
+    statusEl.className = 'text-red-400 mb-4';
+  }
+}
+
 refreshButton.addEventListener('click', triggerRefresh);
 identifyButton.addEventListener('click', triggerIdentify);
+enrichButton.addEventListener('click', triggerEnrich);
 
 (async function init() {
   await loadLibrary();
@@ -368,6 +462,16 @@ identifyButton.addEventListener('click', triggerIdentify);
     }
   } catch (err) {
     // Status endpoint unreachable — identify button stays disabled until a
+    // selection is made anyway.
+  }
+  try {
+    const enrichStatus = await fetchEnrichStatus();
+    setEnrichingUI(enrichStatus.running, enrichStatus.processed, enrichStatus.total);
+    if (enrichStatus.running) {
+      startEnrichPolling();
+    }
+  } catch (err) {
+    // Status endpoint unreachable — enrich button stays disabled until a
     // selection is made anyway.
   }
 })();

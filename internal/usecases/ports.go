@@ -29,6 +29,16 @@ type TrackingStore interface {
 	// resolved metadata in a single commit, without altering its
 	// fingerprint, size, or modification time.
 	RecordIdentification(ctx context.Context, path string, result IdentificationResult) error
+
+	// RecordCoverArt updates one file's stored cover art path, without
+	// altering its fingerprint, status, or resolved metadata.
+	RecordCoverArt(ctx context.Context, path string, coverArtPath string) error
+
+	// GetCoverArtPath returns one file's stored cover art path (a single
+	// indexed lookup, not a full LoadAll) — used to serve cover images,
+	// which would otherwise mean one full-table load per rendered
+	// thumbnail.
+	GetCoverArtPath(ctx context.Context, path string) (coverArtPath string, found bool, err error)
 }
 
 // BulkApply is the batched result of one refresh pass.
@@ -94,4 +104,15 @@ type MusicBrainzLookup interface {
 type IdentificationResult struct {
 	Status   domain.TrackingStatus // StatusIdentified or StatusNotFound
 	Metadata RecordingMetadata     // populated only when Status is StatusIdentified
+}
+
+// CoverArtLookup resolves a MusicBrainz Release ID to front-cover image
+// bytes via Cover Art Archive, falling back to the Release-Group ID if the
+// specific release has no art (a release-group can have many sibling
+// editions, and not all of them have art uploaded). A nil byte slice with
+// a nil error means no cover art is available anywhere in the
+// release-group — distinct from a returned error, which means the lookup
+// itself failed.
+type CoverArtLookup interface {
+	Lookup(ctx context.Context, releaseMBID, releaseGroupMBID string) ([]byte, error)
 }
