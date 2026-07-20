@@ -8,11 +8,6 @@ import (
 	"music-tagger/internal/usecases"
 )
 
-// EnrichRequest is the JSON body for POST /api/v1/library/enrich.
-type EnrichRequest struct {
-	Paths []string `json:"paths"`
-}
-
 // EnrichStatusResponse is the JSON representation of the enrich manager's
 // current/most recent state, per GET /api/v1/library/enrich/status.
 type EnrichStatusResponse struct {
@@ -24,26 +19,25 @@ type EnrichStatusResponse struct {
 // EnrichHandler triggers and reports on the background cover art enrich job.
 type EnrichHandler struct {
 	enrich *usecases.EnrichManager
+	store  usecases.TrackingStore
 }
 
-func NewEnrichHandler(enrich *usecases.EnrichManager) *EnrichHandler {
-	return &EnrichHandler{enrich: enrich}
+func NewEnrichHandler(enrich *usecases.EnrichManager, store usecases.TrackingStore) *EnrichHandler {
+	return &EnrichHandler{enrich: enrich, store: store}
 }
 
-// Trigger starts a background enrich job over the submitted paths. It
-// returns 202 Accepted if started, 400 if no paths were submitted, or 409
-// Conflict if a job is already running. Cover Art Archive needs no API
-// key, so there is no configuration-error case here unlike identify.
+// Trigger starts a background enrich job over the submitted paths, or over
+// every path matching a submitted filter. It returns 202 Accepted if
+// started, 400 if no paths/matching filter were submitted, or 409 Conflict
+// if a job is already running. Cover Art Archive needs no API key, so there
+// is no configuration-error case here unlike identify.
 func (h *EnrichHandler) Trigger(c *fiber.Ctx) error {
-	var req EnrichRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
-	}
-	if len(req.Paths) == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "paths must not be empty")
+	paths, err := resolveSelection(c, h.store)
+	if err != nil {
+		return err
 	}
 
-	if err := h.enrich.Start(req.Paths); err != nil {
+	if err := h.enrich.Start(paths); err != nil {
 		if errors.Is(err, usecases.ErrEnrichInProgress) {
 			return fiber.NewError(fiber.StatusConflict, "an enrich job is already in progress")
 		}

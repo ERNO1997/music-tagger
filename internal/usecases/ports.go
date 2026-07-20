@@ -77,6 +77,50 @@ type TrackingStore interface {
 	// failed with the given reason, without altering its path or any
 	// other field.
 	RecordRelocationFailure(ctx context.Context, path string, relocateErr string) error
+
+	// QueryPage returns one page of tracked records matching filter, sorted
+	// per sort with a stable tie-break, alongside the total count of
+	// matching records independent of limit/offset. Distinct from LoadAll,
+	// which is unfiltered and unpaginated and used only for scan's internal
+	// change-detection diffing.
+	QueryPage(ctx context.Context, filter LibraryFilter, sort LibrarySort, limit, offset int) (entries []domain.FileRecord, total int, err error)
+
+	// QueryPaths returns every path matching filter, ignoring pagination —
+	// used to resolve a bulk action's filter-based selection into a
+	// concrete path list at the moment it executes.
+	QueryPaths(ctx context.Context, filter LibraryFilter) ([]string, error)
+
+	// Delete removes one tracked record entirely. A plain, ungated row
+	// delete — callers are responsible for deciding when deletion is
+	// allowed (see the DeleteMissingFile usecase).
+	Delete(ctx context.Context, path string) error
+}
+
+// LibraryFilter narrows a QueryPage/QueryPaths read. A zero-value
+// LibraryFilter matches every tracked record.
+type LibraryFilter struct {
+	// Status is "" (no filter) or a domain.TrackingStatus value, applied
+	// against each record's EffectiveStatus rather than its stored Status —
+	// filtering by StatusMissing means Missing is set; filtering by any
+	// other status means Missing is clear and Status matches.
+	Status string
+
+	// Tagged and Relocated are nil (no filter) or a pointer to the exact
+	// boolean value each matching record's field must equal.
+	Tagged    *bool
+	Relocated *bool
+
+	// Search is a case-insensitive substring match against path, artist,
+	// album, and title. Empty means no filter.
+	Search string
+}
+
+// LibrarySort orders a QueryPage read. By must be one of the allow-listed
+// sort keys (path, status, artist, album, duration, year); an unrecognized
+// or empty value falls back to path ascending.
+type LibrarySort struct {
+	By   string
+	Desc bool
 }
 
 // BulkApply is the batched result of one refresh pass.

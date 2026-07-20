@@ -589,3 +589,167 @@ func (s *SQLiteStore) RecordRelocationFailure(ctx context.Context, path string, 
 	}
 	return nil
 }
+
+// librarySortColumns is the allow-list from a public LibrarySort.By value to
+// a literal SQL column name. User input must never be interpolated directly
+// into an ORDER BY clause — SQL parameterization doesn't cover identifiers —
+// so an unrecognized or empty By value falls back to "path".
+var librarySortColumns = map[string]string{
+	"path":     "path",
+	"status":   "status",
+	"artist":   "artist",
+	"album":    "album",
+	"duration": "duration_seconds",
+	"year":     "year",
+}
+
+// buildLibraryWhere translates a LibraryFilter into a parameterized WHERE
+// clause (without the "WHERE" keyword) shared by QueryPage and QueryPaths.
+func buildLibraryWhere(filter usecases.LibraryFilter) (string, []any) {
+	var clauses []string
+	var args []any
+
+	if filter.Status != "" {
+		if domain.TrackingStatus(filter.Status) == domain.StatusMissing {
+			clauses = append(clauses, "missing = 1")
+		} else {
+			clauses = append(clauses, "missing = 0 AND status = ?")
+			args = append(args, filter.Status)
+		}
+	}
+	if filter.Tagged != nil {
+		clauses = append(clauses, "tagged = ?")
+		args = append(args, boolToInt(*filter.Tagged))
+	}
+	if filter.Relocated != nil {
+		clauses = append(clauses, "relocated = ?")
+		args = append(args, boolToInt(*filter.Relocated))
+	}
+	if filter.Search != "" {
+		clauses = append(clauses, "(path LIKE '%'||?||'%' COLLATE NOCASE OR artist LIKE '%'||?||'%' COLLATE NOCASE OR album LIKE '%'||?||'%' COLLATE NOCASE OR title LIKE '%'||?||'%' COLLATE NOCASE)")
+		args = append(args, filter.Search, filter.Search, filter.Search, filter.Search)
+	}
+
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	where := clauses[0]
+	for _, c := range clauses[1:] {
+		where += " AND " + c
+	}
+	return where, args
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// QueryPage returns one page of tracked records matching filter, sorted per
+// sort with an id-based tie-break, alongside the total matching count.
+func (s *SQLiteStore) QueryPage(ctx context.Context, filter usecases.LibraryFilter, sort usecases.LibrarySort, limit, offset int) ([]domain.FileRecord, int, error) {
+	where, args := buildLibraryWhere(filter)
+
+	countQuery := "SELECT COUNT(*) FROM files"
+	if where != "" {
+		countQuery += " WHERE " + where
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("counting library rows: %w", err)
+	}
+
+	column, ok := librarySortColumns[sort.By]
+	if !ok {
+		column = "path"
+	}
+	direction := "ASC"
+	if sort.Desc {
+		direction = "DESC"
+	}
+
+	query := `
+		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+		       artist, album, title, track_number, recording_mbid,
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
+		FROM files`
+	if where != "" {
+		query += " WHERE " + where
+	}
+	query += fmt.Sprintf(" ORDER BY %s %s, id ASC LIMIT ? OFFSET ?", column, direction)
+
+	pageArgs := append(append([]any{}, args...), limit, offset)
+	rows, err := s.db.QueryContext(ctx, query, pageArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("querying library page: %w", err)
+	}
+	defer rows.Close()
+
+	var entries []domain.FileRecord
+	for rows.Next() {
+		var rec domain.FileRecord
+		var format, status string
+		var missing, tagged, relocated int
+		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
+			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
+			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError); err != nil {
+			return nil, 0, fmt.Errorf("scanning library page row: %w", err)
+		}
+		rec.Format = domain.Format(format)
+		rec.Status = domain.TrackingStatus(status)
+		rec.Missing = missing != 0
+		rec.Tagged = tagged != 0
+		rec.Relocated = relocated != 0
+		entries = append(entries, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("reading library page rows: %w", err)
+	}
+
+	return entries, total, nil
+}
+
+// QueryPaths returns every path matching filter, ignoring pagination — used
+// to resolve a bulk action's filter-based selection at execution time.
+func (s *SQLiteStore) QueryPaths(ctx context.Context, filter usecases.LibraryFilter) ([]string, error) {
+	where, args := buildLibraryWhere(filter)
+
+	query := "SELECT path FROM files"
+	if where != "" {
+		query += " WHERE " + where
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying matching paths: %w", err)
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, fmt.Errorf("scanning matching path: %w", err)
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading matching paths: %w", err)
+	}
+
+	return paths, nil
+}
+
+// Delete removes one tracked record entirely. A plain, ungated row delete —
+// callers decide when deletion is allowed.
+func (s *SQLiteStore) Delete(ctx context.Context, path string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM files WHERE path = ?`, path)
+	if err != nil {
+		return fmt.Errorf("deleting tracked record for %s: %w", path, err)
+	}
+	return nil
+}

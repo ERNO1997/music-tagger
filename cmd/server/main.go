@@ -77,19 +77,23 @@ func main() {
 	relocateManager := usecases.NewRelocateManager(relocateFile, refreshManager)
 	refreshManager.SetRelocateStatus(relocateManager)
 
+	deleteMissingFile := usecases.NewDeleteMissingFile(store)
+
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
-	identifyHandler := v1.NewIdentifyHandler(identifyManager, identifyConfigErr)
-	enrichHandler := v1.NewEnrichHandler(enrichManager)
+	identifyHandler := v1.NewIdentifyHandler(identifyManager, store, identifyConfigErr)
+	enrichHandler := v1.NewEnrichHandler(enrichManager, store)
 	coverHandler := v1.NewCoverHandler(store)
 	lyricsHandler := v1.NewLyricsHandler(store)
-	tagHandler := v1.NewTagHandler(tagManager)
+	tagHandler := v1.NewTagHandler(tagManager, store)
 	embeddedTagsHandler := v1.NewEmbeddedTagsHandler(tagFile)
-	relocateHandler := v1.NewRelocateHandler(relocateManager)
+	relocateHandler := v1.NewRelocateHandler(relocateManager, store)
+	fingerprintHandler := v1.NewFingerprintHandler(store)
+	deleteHandler := v1.NewDeleteHandler(deleteMissingFile)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, deleteHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),
