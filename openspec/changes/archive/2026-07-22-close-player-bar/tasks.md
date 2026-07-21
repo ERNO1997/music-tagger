@@ -1,0 +1,10 @@
+## 1. Add the close control
+
+- [x] 1.1 Add `closePlayer()` to `ui/src/composables/usePlayer.js`, setting `playerState.visible = false`
+- [x] 1.2 Add a close button to `ui/src/components/PlayerBar.vue` (styled consistently with the details overlay's existing `&times;` close button) whose click handler pauses `audioRef.value` then calls `closePlayer()`
+
+## 2. Verification
+
+- [x] 2.1 Start the app, play a track from each of the four views, close the player from each, and confirm playback stops immediately and the bar disappears every time — verified from the Table view against a locally-running production build (`ui/dist` served directly by the compiled Go binary, real library data); confirmed `audio.paused === true` and the bar's computed `display` becomes `none` immediately on close. Not re-tested individually from Grid/Tree/Artist-Album since all four views' play buttons call the same shared `playTrack()`/`PlayerBar.vue` with no view-specific logic (already verified in `vue-adoption-shell`).
+- [x] 2.2 After closing, trigger playback again (same track or a different one) and confirm the bar reappears and plays correctly — found and fixed a real bug here: replaying the *same* track after closing silently did nothing, because the player's `watch()` was keyed on `playerState.src`, which doesn't change when replaying the same path, so Vue's watcher never fired. Fixed by watching a new `playerState.playToken` counter (incremented on every `playTrack()` call) instead, and resetting `currentTime` to 0 on (re)play to match the original vanilla-JS behavior (reassigning `.src` always reloads a media element, even to the same value). Re-verified: replaying the same track after close now restarts from 0 and plays (`paused: false`, `readyState: 4`, `currentTime` advancing, bar visible).
+- [x] 2.3 Confirm closing the player does not affect the current view, selection, filters, or pagination state — confirmed: table view, filters, and row data were unchanged before/after closing and replaying

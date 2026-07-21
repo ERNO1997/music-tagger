@@ -9,8 +9,8 @@ below have their own archived change.
 
 | # | Change name                        | Status                          |
 |---|-------------------------------------|----------------------------------|
-| 1 | `vue-adoption-shell`                | **Implemented** (all 27 tasks done, verified live in-browser + `docker compose build`; not yet archived — run `/opsx:archive` when ready) |
-| 2 | `close-player-bar`                  | Not started — blocked on #1 |
+| 1 | `vue-adoption-shell`                | **Done** — archived at `openspec/changes/archive/2026-07-22-vue-adoption-shell/` |
+| 2 | `close-player-bar`                  | **Done** — archived at `openspec/changes/archive/2026-07-22-close-player-bar/`, spec synced |
 | 3 | `view-selected-files`               | Not started — blocked on #1 |
 | 4 | `tree-and-artist-album-selection`   | Not started — blocked on #1 |
 | 5 | `grid-view-pagination-fix`          | Not started — blocked on #1 |
