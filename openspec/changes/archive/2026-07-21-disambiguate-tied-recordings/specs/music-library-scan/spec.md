@@ -112,6 +112,14 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 - **WHEN** a row's status is not `ambiguous`
 - **THEN** the UI SHALL NOT offer a candidate-resolve action for that row
 
+#### Scenario: Browsing alternate covers from the details view
+- **WHEN** a user opens the details view for an `identified` row and triggers "browse other covers"
+- **THEN** the UI SHALL fetch and display cover-art candidates across that file's release-group's sibling editions, and SHALL let the user choose one, calling the choose endpoint and reflecting the row's cover art with the chosen image once the choice succeeds
+
+#### Scenario: Cover-browsing action is not available for unidentified files
+- **WHEN** a row's status is not `identified`
+- **THEN** the UI SHALL NOT offer a cover-browsing action for that row
+
 ### Requirement: On-demand identification action
 The system SHALL expose a `POST /api/v1/library/identify` endpoint accepting either a list of one or more file paths, or a filter (in the same shape accepted by `GET /api/v1/library`'s `status`/`tagged`/`relocated`/`has_lyrics`/`q` query parameters), which starts a background job resolving each matching path's canonical metadata via AcoustID and MusicBrainz (per the `acoustid-lookup` and `musicbrainz-metadata` capabilities) and returns immediately rather than blocking for the duration of the job. When a filter is given, the system SHALL resolve it to the current set of matching paths at the moment the job starts, not at some earlier time the filter's matching count may have been displayed. A path with no fingerprint already stored SHALL have one computed as part of this job, per the `file-tracking-store` capability's "Fingerprint computed lazily during identification" requirement, rather than being skipped. A path whose accepted AcoustID match ties multiple distinct recordings SHALL be recorded `ambiguous` with its candidates stored, per the `file-tracking-store` capability's "Ambiguous identification is recorded with candidate metadata" requirement, rather than one recording being auto-picked.
 
@@ -166,3 +174,29 @@ The system SHALL expose a `POST /api/v1/library/identify/resolve` endpoint accep
 #### Scenario: Resolving an unrecognized candidate is rejected
 - **WHEN** a client issues `POST /api/v1/library/identify/resolve` with a path and a recording ID that does not match any of that file's stored candidates
 - **THEN** the response SHALL be `404 Not Found` and the file's status and stored candidates SHALL remain unchanged
+
+### Requirement: Cover-art candidate retrieval via API
+The system SHALL expose a `GET /api/v1/library/cover/candidates` endpoint that, given an identified tracked file's path, returns front-cover candidates (release ID, release title, thumbnail URL, and image URL) across that file's release-group's sibling editions (per the `cover-art-lookup` and `musicbrainz-metadata` capabilities), separately from the main list endpoint and from the single automatically-resolved cover.
+
+#### Scenario: Candidates available
+- **WHEN** a client requests cover candidates for an identified file whose release-group has at least one sibling edition with a front cover uploaded
+- **THEN** the response SHALL be `200 OK` with a JSON body containing those candidates
+
+#### Scenario: No candidates found
+- **WHEN** a client requests cover candidates for an identified file whose release-group has no sibling edition with a front cover uploaded
+- **THEN** the response SHALL be `200 OK` with an empty candidate list
+
+#### Scenario: Unknown or unidentified path
+- **WHEN** a client requests cover candidates for a path that is not tracked, or is tracked but not yet `identified`
+- **THEN** the response SHALL be `404 Not Found`
+
+### Requirement: On-demand cover-art choice action
+The system SHALL expose a `POST /api/v1/library/cover/choose` endpoint accepting a tracked file's path, a candidate's release ID, and its image URL, which downloads that image and records it as the file's cover art (per the `file-tracking-store` capability's existing cover-art recording, identically to automatic enrichment) and responds synchronously.
+
+#### Scenario: Choosing a candidate succeeds
+- **WHEN** a client issues `POST /api/v1/library/cover/choose` with a path and a release ID/image URL previously returned by the candidates endpoint
+- **THEN** the response SHALL be `200 OK` and the file's cover art SHALL become the chosen image
+
+#### Scenario: Choosing an image outside Cover Art Archive's host is rejected
+- **WHEN** a client issues `POST /api/v1/library/cover/choose` with an image URL whose host is not Cover Art Archive's own domain
+- **THEN** the system SHALL refuse the request with an error and SHALL NOT fetch it
