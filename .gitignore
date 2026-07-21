@@ -1,2 +1,4 @@
 .env
 .idea/
+ui/node_modules/
+ui/dist/
