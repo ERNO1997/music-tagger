@@ -97,9 +97,14 @@ func main() {
 	coverBrowseHandler := v1.NewCoverBrowseHandler(browseCoverArt)
 	deleteHandler := v1.NewDeleteHandler(deleteMissingFile)
 
+	treeBrowse := usecases.NewTreeBrowse(store)
+	treeHandler := v1.NewTreeHandler(treeBrowse, musicRoot)
+	artistAlbumHandler := v1.NewArtistAlbumHandler(store)
+	audioHandler := v1.NewAudioHandler(store)
+
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler, treeHandler, artistAlbumHandler, audioHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

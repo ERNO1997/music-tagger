@@ -18,6 +18,38 @@ export async function fetchLibrary(params) {
   return res.json();
 }
 
+export async function fetchTree(params) {
+  const res = await fetch(`/api/v1/library/tree?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchArtists(params) {
+  const res = await fetch(`/api/v1/library/artists?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchAlbums(params) {
+  const res = await fetch(`/api/v1/library/albums?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function fetchTracks(params) {
+  const res = await fetch(`/api/v1/library/tracks?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function deleteLibraryEntry(path) {
   const res = await fetch(`/api/v1/library/entry?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
   if (res.status !== 204 && res.status !== 200) {

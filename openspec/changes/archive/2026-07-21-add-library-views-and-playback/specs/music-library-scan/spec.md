@@ -1,11 +1,15 @@
 ## MODIFIED Requirements
 
 ### Requirement: Web UI listing of scan results
-The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results, in the user's currently-selected view (table, grid, folder tree, or Artist-Album — see the `library-browsing` capability for the latter two), showing path, format, duration, identification status, a condensed resolved-metadata summary (or a raw tag snapshot when not yet identified), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, provide a resolve action for rows with status `ambiguous`, and allow opening a full details view for any single row or card. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting (in table view), page navigation, and switching between views.
+The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results, in the user's currently-selected view (table, grid, folder tree, or Artist-Album — see the `library-browsing` capability for the latter two), showing path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, provide a resolve action for rows with status `ambiguous`, provide a manual search action available from any row's details view regardless of status, and allow opening a full details view for any single row or card. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting (in table view), page navigation, and switching between views.
 
 #### Scenario: Page loads scan results on open
 - **WHEN** a user opens the web UI in a browser
 - **THEN** the page SHALL default to the table view, call `GET /api/v1/library`, and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present
+
+#### Scenario: An unidentified file's row shows its raw tag snapshot instead of blank metadata
+- **WHEN** a table row's file has status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
+- **THEN** the row's metadata summary SHALL show the raw title/artist/album, visually distinguished (e.g. styled or labeled differently) from a resolved-metadata summary shown for an `identified` row
 
 #### Scenario: Refresh trigger disabled while running
 - **WHEN** a refresh is currently running (whether started by this user, another tab, or automatically at server startup)
@@ -106,6 +110,26 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 #### Scenario: Cover-browsing action is not available for unidentified files
 - **WHEN** a row's status is not `identified`
 - **THEN** the UI SHALL NOT offer a cover-browsing action for that row
+
+#### Scenario: Details view shows the raw tag snapshot for an unidentified file
+- **WHEN** a user opens the details view for a file with status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
+- **THEN** the UI SHALL display the raw title/artist/album/album-artist fields, labeled as embedded-in-file data rather than resolved metadata
+
+#### Scenario: Manual search is available for any row
+- **WHEN** a user opens the details view for a tracked file, regardless of its current status
+- **THEN** the UI SHALL offer a manual search control accepting free-text (or artist/title/album) input
+
+#### Scenario: Manual search results use the existing candidate picker
+- **WHEN** a manual search returns one or more candidates
+- **THEN** the UI SHALL render them using the same candidate-list/"Use this" component already used for ambiguous AcoustID results, and choosing one SHALL call the existing resolve endpoint
+
+#### Scenario: Manual search on an already-identified file warns before discarding its resolved metadata
+- **WHEN** a user triggers a manual search for a file whose status is currently `identified`
+- **THEN** the UI SHALL prompt for confirmation before submitting the search, since submitting it discards the file's current resolved metadata and stored candidates immediately
+
+#### Scenario: Manual search with no results leaves the file's row unchanged
+- **WHEN** a manual search returns zero candidates
+- **THEN** the UI SHALL indicate no matches were found and SHALL NOT alter the displayed row's status or metadata
 
 #### Scenario: Switching to grid view
 - **WHEN** a user selects the grid view

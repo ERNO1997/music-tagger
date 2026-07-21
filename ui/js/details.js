@@ -10,7 +10,11 @@ import {
   fetchEmbeddedTags,
   fetchLyrics,
 } from './api.js';
-import { loadLibrary } from './table.js';
+// Set by initDetails(); main.js's refreshCurrentView, which refreshes
+// whichever of table/grid/tree/artist-album is presently active — not
+// hardcoded to table.js's loadLibrary, since a candidate resolve or cover
+// choice can happen while any of the four views is showing this file.
+let refreshCurrentView = async () => {};
 
 const detailsOverlay = document.getElementById('details-overlay');
 const detailsFields = document.getElementById('details-fields');
@@ -192,7 +196,7 @@ manualSearchButton.addEventListener('click', async () => {
     manualSearchButton.dataset.status = 'ambiguous';
     detailsCandidatesHeading.textContent = 'Search results — choose the correct recording';
     renderCandidates(path, candidates);
-    await loadLibrary();
+    await refreshCurrentView();
   } catch (err) {
     manualSearchStatus.textContent = `Search failed: ${err.message}`;
   } finally {
@@ -203,7 +207,7 @@ manualSearchButton.addEventListener('click', async () => {
 async function resolveCandidate(path, recordingMbid) {
   try {
     await postIdentifyResolve(path, recordingMbid);
-    await loadLibrary();
+    await refreshCurrentView();
     closeDetails();
   } catch (err) {
     detailsCandidates.textContent = `Failed to resolve candidate: ${err.message}`;
@@ -252,7 +256,7 @@ async function loadCoverCandidates(path) {
 async function chooseCover(path, releaseMbid, imageUrl) {
   try {
     await postCoverChoose(path, releaseMbid, imageUrl);
-    await loadLibrary();
+    await refreshCurrentView();
     detailsCover.src = `/api/v1/library/cover?path=${encodeURIComponent(path)}&_=${Date.now()}`;
     detailsCover.classList.remove('hidden');
   } catch (err) {
@@ -334,3 +338,7 @@ detailsOverlay.addEventListener('click', (e) => {
     closeDetails();
   }
 });
+
+export function initDetails(refreshCurrentViewCallback) {
+  refreshCurrentView = refreshCurrentViewCallback;
+}

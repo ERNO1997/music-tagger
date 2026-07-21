@@ -2,6 +2,7 @@ import { state, buildListParams } from './state.js';
 import { formatDuration, escapeHtml, STATUS_LABELS, STATUS_CLASSES } from './format.js';
 import { fetchLibrary, deleteLibraryEntry } from './api.js';
 import { updateAllActionButtons } from './actions.js';
+import { playTrack } from './player.js';
 
 const statusEl = document.getElementById('status');
 const rowsEl = document.getElementById('library-rows');
@@ -79,6 +80,7 @@ function renderRow(entry) {
   const lyricsCell = entry.has_lyrics ? '<span class="text-green-400" title="Lyrics available">&#9834;</span>' : '—';
   const taggedCell = renderTaggedCell(entry);
   const relocatedCell = renderRelocatedCell(entry);
+  const playCell = renderPlayCell(entry);
   const actionsCell = renderActionsCell(entry);
 
   if (entry.error) {
@@ -94,6 +96,7 @@ function renderRow(entry) {
       <td class="px-4 py-3">—</td>
       <td class="px-4 py-3">${taggedCell}</td>
       <td class="px-4 py-3">${relocatedCell}</td>
+      <td class="px-4 py-3">${playCell}</td>
       <td class="px-4 py-3">${actionsCell}</td>
     `;
     return row;
@@ -110,6 +113,7 @@ function renderRow(entry) {
     <td class="px-4 py-3">${lyricsCell}</td>
     <td class="px-4 py-3">${taggedCell}</td>
     <td class="px-4 py-3">${relocatedCell}</td>
+    <td class="px-4 py-3">${playCell}</td>
     <td class="px-4 py-3">${actionsCell}</td>
   `;
   return row;
@@ -142,7 +146,14 @@ function renderActionsCell(entry) {
   return `<button class="delete-entry-button text-red-400 hover:text-red-300" data-path="${escapeHtml(entry.path)}" title="Delete this tracked entry (the file is already missing from disk)">&#128465;</button>`;
 }
 
-function renderCoverCell(entry) {
+function renderPlayCell(entry) {
+  if (entry.status === 'missing') {
+    return '—';
+  }
+  return `<button class="play-button text-neutral-300 hover:text-white" data-path="${escapeHtml(entry.path)}" title="Play">&#9654;</button>`;
+}
+
+export function renderCoverCell(entry) {
   if (!entry.has_cover_art) {
     return '<div class="w-10 h-10 rounded bg-neutral-800"></div>';
   }
@@ -150,7 +161,7 @@ function renderCoverCell(entry) {
   return `<img src="${src}" class="w-10 h-10 rounded object-cover" alt="" />`;
 }
 
-function renderMetadataCell(entry) {
+export function renderMetadataCell(entry) {
   if (entry.status === 'identified') {
     const track = entry.track_number ? `Track ${entry.track_number}` : '';
     return escapeHtml([entry.artist, entry.album, entry.title, track].filter(Boolean).join(' – '));
@@ -181,8 +192,10 @@ async function deleteEntry(path) {
 // "every file matching the current filter" selected — the latter always
 // reads its count from `total`, which is re-fetched with every filter
 // change, so the displayed count and what a bulk action would actually
-// process never drift apart.
-function updateSelectionBanner() {
+// process never drift apart. Takes the currently-visible view's checkbox
+// container (defaulting to the table's) so grid.js can reuse this after
+// rendering its own cards.
+export function updateSelectionBanner(checkboxContainer = rowsEl) {
   if (state.selectionMode === 'filter') {
     selectionBanner.classList.remove('hidden');
     selectionBannerText.textContent = `All ${state.total} matching file(s) selected.`;
@@ -191,7 +204,7 @@ function updateSelectionBanner() {
     return;
   }
 
-  const pageCheckboxes = rowsEl.querySelectorAll('.row-checkbox');
+  const pageCheckboxes = checkboxContainer.querySelectorAll('.row-checkbox');
   const allPageSelected = pageCheckboxes.length > 0 && [...pageCheckboxes].every((cb) => state.selectedPaths.has(cb.dataset.path));
 
   if (state.selectedPaths.size === 0) {
@@ -261,6 +274,15 @@ rowsEl.addEventListener('click', (e) => {
   if (e.target.closest('.delete-entry-button')) {
     e.stopPropagation();
     deleteEntry(e.target.closest('.delete-entry-button').dataset.path);
+    return;
+  }
+  if (e.target.closest('.play-button')) {
+    e.stopPropagation();
+    const path = e.target.closest('.play-button').dataset.path;
+    const entry = state.lastEntries.find((en) => en.path === path);
+    if (entry) {
+      playTrack(entry);
+    }
     return;
   }
   // Clicking the selection checkbox (or anything inside it) only toggles

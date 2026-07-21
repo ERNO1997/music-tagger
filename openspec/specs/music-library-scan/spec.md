@@ -105,11 +105,11 @@ The endpoint SHALL accept optional query parameters: `status` (one of `new`, `id
 - **THEN** the system SHALL apply the filter and search first, then sort, then paginate the result, consistently with `total` reflecting the post-filter, pre-pagination count
 
 ### Requirement: Web UI listing of scan results
-The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results as a table showing path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, provide a resolve action for rows with status `ambiguous`, provide a manual search action available from any row's details view regardless of status, and allow opening a full details view for any single row. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting, and page navigation.
+The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results, in the user's currently-selected view (table, grid, folder tree, or Artist-Album — see the `library-browsing` capability for the latter two), showing path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, provide a resolve action for rows with status `ambiguous`, provide a manual search action available from any row's details view regardless of status, and allow opening a full details view for any single row or card. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting (in table view), page navigation, and switching between views.
 
 #### Scenario: Page loads scan results on open
 - **WHEN** a user opens the web UI in a browser
-- **THEN** the page SHALL call `GET /api/v1/library` and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present
+- **THEN** the page SHALL default to the table view, call `GET /api/v1/library`, and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present
 
 #### Scenario: An unidentified file's row shows its raw tag snapshot instead of blank metadata
 - **WHEN** a table row's file has status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
@@ -117,7 +117,7 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 
 #### Scenario: Refresh trigger disabled while running
 - **WHEN** a refresh is currently running (whether started by this user, another tab, or automatically at server startup)
-- **THEN** the UI's refresh trigger control SHALL be disabled and SHALL display that a scan is in progress, re-enabling only once the refresh completes
+- **THEN** the UI's refresh trigger control SHALL be disabled and SHALL display that a scan is in progress, re-enabling only once the refresh completes, regardless of which view is active
 
 #### Scenario: Rows can be selected for bulk identification
 - **WHEN** a user selects one or more rows in the table
@@ -161,11 +161,11 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 
 #### Scenario: Filtering, searching, and sorting the table
 - **WHEN** a user sets a status/tagged/relocated/has-lyrics/has-cover-art filter, enters search text, or clicks a sortable column header
-- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with the corresponding query parameters and re-render the table to reflect only the current page of matching, sorted results
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with the corresponding query parameters and re-render the currently active view to reflect only the current page of matching, sorted results
 
 #### Scenario: Navigating between pages
 - **WHEN** a user changes page size or navigates to another page
-- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with the corresponding `limit`/`offset` and replace the currently rendered rows with that page's results
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with the corresponding `limit`/`offset` and replace the currently rendered rows/cards with that page's results
 
 #### Scenario: Selecting all rows matching the current filter, not just the current page
 - **WHEN** a user chooses "select all matching" while a filter and/or search is active
@@ -189,11 +189,11 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 
 #### Scenario: Filtering by lyrics outcome in the UI
 - **WHEN** a user sets the lyrics filter to "missing lyrics"
-- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_lyrics=false` and re-render the table accordingly
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_lyrics=false` and re-render the currently active view accordingly
 
 #### Scenario: Filtering by cover art outcome in the UI
 - **WHEN** a user sets the cover art filter to "missing cover"
-- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_cover_art=false` and re-render the table accordingly
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_cover_art=false` and re-render the currently active view accordingly
 
 #### Scenario: Ambiguous rows are visually distinguished
 - **WHEN** a row's status is `ambiguous`
@@ -234,6 +234,18 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 #### Scenario: Manual search with no results leaves the file's row unchanged
 - **WHEN** a manual search returns zero candidates
 - **THEN** the UI SHALL indicate no matches were found and SHALL NOT alter the displayed row's status or metadata
+
+#### Scenario: Switching to grid view
+- **WHEN** a user selects the grid view
+- **THEN** the UI SHALL render the same currently-fetched (and future) `GET /api/v1/library` results as cover-forward cards instead of table rows, without changing the active filter, search, sort, or selection
+
+#### Scenario: Grid view supports the same actions as table view
+- **WHEN** a user is in grid view
+- **THEN** selection, bulk actions, and opening the details view for a card SHALL behave identically to their table-view equivalents
+
+#### Scenario: Switching views preserves the active filter
+- **WHEN** a user switches from one view to another while a status/tagged/relocated/has-lyrics/has-cover-art filter or search term is active
+- **THEN** the newly active view SHALL reflect the same filter/search, not reset to an unfiltered view
 
 ### Requirement: Asynchronous refresh action
 The system SHALL expose a `POST /api/v1/library/scan` endpoint that starts the disk walk and tracking-store update (per the `file-tracking-store` capability) in the background and returns immediately, rather than blocking for the duration of the refresh. A refresh SHALL NOT fingerprint any file — fingerprinting happens lazily during identification (see the `file-tracking-store` capability's "Fingerprint computed lazily during identification" requirement).

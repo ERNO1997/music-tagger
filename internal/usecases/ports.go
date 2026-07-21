@@ -144,6 +144,50 @@ type TrackingStore interface {
 	// delete — callers are responsible for deciding when deletion is
 	// allowed (see the DeleteMissingFile usecase).
 	Delete(ctx context.Context, path string) error
+
+	// PathsUnder returns every tracked record whose path starts with
+	// prefix (a plain LIKE 'prefix%' match), unfiltered and unpaginated —
+	// used by TreeBrowse to fetch everything under a folder-tree node in
+	// one query before grouping it in memory into subdirectories vs.
+	// direct files.
+	PathsUnder(ctx context.Context, prefix string) ([]domain.FileRecord, error)
+
+	// ListArtists returns every distinct artist name honoring filter — an
+	// identified file's resolved artist, falling back to its raw tag
+	// artist, falling back to the distinguished UnknownArtist bucket —
+	// each with its total matching track count.
+	ListArtists(ctx context.Context, filter LibraryFilter) ([]ArtistSummary, error)
+
+	// ListAlbums returns every distinct album for artist (matched against
+	// the same resolved-or-raw-or-unknown grouping ListArtists produces)
+	// honoring filter, each with its matching track count.
+	ListAlbums(ctx context.Context, artist string, filter LibraryFilter) ([]AlbumSummary, error)
+
+	// ListTracks returns artist+album's matching tracks honoring filter,
+	// sorted by track number.
+	ListTracks(ctx context.Context, artist, album string, filter LibraryFilter) ([]domain.FileRecord, error)
+}
+
+// UnknownArtist and UnknownAlbum are the distinguished bucket names
+// ListArtists/ListAlbums/ListTracks group a tracked file under when it has
+// neither resolved metadata nor a raw tag snapshot for that dimension.
+const (
+	UnknownArtist = "(Unknown Artist)"
+	UnknownAlbum  = "(Unknown Album)"
+)
+
+// ArtistSummary is one distinct artist grouping, as returned by
+// ListArtists.
+type ArtistSummary struct {
+	Artist     string
+	TrackCount int
+}
+
+// AlbumSummary is one distinct album grouping for a given artist, as
+// returned by ListAlbums.
+type AlbumSummary struct {
+	Album      string
+	TrackCount int
 }
 
 // LibraryFilter narrows a QueryPage/QueryPaths read. A zero-value

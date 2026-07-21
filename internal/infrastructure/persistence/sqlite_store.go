@@ -1009,3 +1009,175 @@ func (s *SQLiteStore) Delete(ctx context.Context, path string) error {
 	}
 	return nil
 }
+
+// PathsUnder returns every tracked record whose path starts with prefix,
+// unfiltered and unpaginated — TreeBrowse groups the result into
+// subdirectories vs. direct files in memory.
+func (s *SQLiteStore) PathsUnder(ctx context.Context, prefix string) ([]domain.FileRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+		       artist, album, title, track_number, recording_mbid,
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+		       raw_title, raw_artist, raw_album, raw_album_artist
+		FROM files
+		WHERE path LIKE ?
+	`, prefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("querying paths under %s: %w", prefix, err)
+	}
+	defer rows.Close()
+
+	var records []domain.FileRecord
+	for rows.Next() {
+		var rec domain.FileRecord
+		var format, status string
+		var missing, tagged, relocated int
+		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
+			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
+			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError,
+			&rec.RawTitle, &rec.RawArtist, &rec.RawAlbum, &rec.RawAlbumArtist); err != nil {
+			return nil, fmt.Errorf("scanning path-under row: %w", err)
+		}
+		rec.Format = domain.Format(format)
+		rec.Status = domain.TrackingStatus(status)
+		rec.Missing = missing != 0
+		rec.Tagged = tagged != 0
+		rec.Relocated = relocated != 0
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading path-under rows: %w", err)
+	}
+
+	return records, nil
+}
+
+// ListArtists returns every distinct artist grouping (resolved artist,
+// falling back to raw tag artist, falling back to usecases.UnknownArtist)
+// honoring filter, each with its total matching track count.
+func (s *SQLiteStore) ListArtists(ctx context.Context, filter usecases.LibraryFilter) ([]usecases.ArtistSummary, error) {
+	where, args := buildLibraryWhere(filter)
+
+	query := `
+		SELECT COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) AS artist_name, COUNT(*) AS track_count
+		FROM files`
+	queryArgs := append([]any{usecases.UnknownArtist}, args...)
+	if where != "" {
+		query += " WHERE " + where
+	}
+	query += " GROUP BY artist_name ORDER BY artist_name COLLATE NOCASE"
+
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("querying artists: %w", err)
+	}
+	defer rows.Close()
+
+	var artists []usecases.ArtistSummary
+	for rows.Next() {
+		var a usecases.ArtistSummary
+		if err := rows.Scan(&a.Artist, &a.TrackCount); err != nil {
+			return nil, fmt.Errorf("scanning artist row: %w", err)
+		}
+		artists = append(artists, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading artist rows: %w", err)
+	}
+
+	return artists, nil
+}
+
+// ListAlbums returns every distinct album grouping for artist (matched
+// against the same resolved-or-raw-or-unknown expression ListArtists
+// groups by) honoring filter, each with its matching track count.
+func (s *SQLiteStore) ListAlbums(ctx context.Context, artist string, filter usecases.LibraryFilter) ([]usecases.AlbumSummary, error) {
+	where, args := buildLibraryWhere(filter)
+
+	query := `
+		SELECT COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) AS album_name, COUNT(*) AS track_count
+		FROM files
+		WHERE COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?`
+	queryArgs := []any{usecases.UnknownAlbum, usecases.UnknownArtist, artist}
+	if where != "" {
+		query += " AND " + where
+		queryArgs = append(queryArgs, args...)
+	}
+	query += " GROUP BY album_name ORDER BY album_name COLLATE NOCASE"
+
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("querying albums for %s: %w", artist, err)
+	}
+	defer rows.Close()
+
+	var albums []usecases.AlbumSummary
+	for rows.Next() {
+		var a usecases.AlbumSummary
+		if err := rows.Scan(&a.Album, &a.TrackCount); err != nil {
+			return nil, fmt.Errorf("scanning album row: %w", err)
+		}
+		albums = append(albums, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading album rows: %w", err)
+	}
+
+	return albums, nil
+}
+
+// ListTracks returns artist+album's matching tracks (matched against the
+// same resolved-or-raw-or-unknown expressions ListArtists/ListAlbums group
+// by) honoring filter, sorted by track number.
+func (s *SQLiteStore) ListTracks(ctx context.Context, artist, album string, filter usecases.LibraryFilter) ([]domain.FileRecord, error) {
+	where, args := buildLibraryWhere(filter)
+
+	query := `
+		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
+		       artist, album, title, track_number, recording_mbid,
+		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+		       raw_title, raw_artist, raw_album, raw_album_artist
+		FROM files
+		WHERE COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?
+		  AND COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) = ?`
+	queryArgs := []any{usecases.UnknownArtist, artist, usecases.UnknownAlbum, album}
+	if where != "" {
+		query += " AND " + where
+		queryArgs = append(queryArgs, args...)
+	}
+	query += " ORDER BY track_number ASC, path ASC"
+
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("querying tracks for %s/%s: %w", artist, album, err)
+	}
+	defer rows.Close()
+
+	var records []domain.FileRecord
+	for rows.Next() {
+		var rec domain.FileRecord
+		var format, status string
+		var missing, tagged, relocated int
+		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
+			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
+			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError,
+			&rec.RawTitle, &rec.RawArtist, &rec.RawAlbum, &rec.RawAlbumArtist); err != nil {
+			return nil, fmt.Errorf("scanning track row: %w", err)
+		}
+		rec.Format = domain.Format(format)
+		rec.Status = domain.TrackingStatus(status)
+		rec.Missing = missing != 0
+		rec.Tagged = tagged != 0
+		rec.Relocated = relocated != 0
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading track rows: %w", err)
+	}
+
+	return records, nil
+}

@@ -41,7 +41,11 @@ export function getSelectionBody() {
   return { paths: [...state.selectedPaths] };
 }
 
-export function buildListParams() {
+// buildFilterParams returns just the status/tagged/relocated/has_lyrics/
+// has_cover_art/q query parameters — shared by every view (table, grid,
+// tree, artist-album), each of which layers its own sort/pagination
+// parameters on top where applicable.
+export function buildFilterParams() {
   const params = new URLSearchParams();
   if (state.filterState.status) params.set('status', state.filterState.status);
   if (state.filterState.tagged !== '') params.set('tagged', state.filterState.tagged);
@@ -49,6 +53,11 @@ export function buildListParams() {
   if (state.filterState.hasLyrics !== '') params.set('has_lyrics', state.filterState.hasLyrics);
   if (state.filterState.hasCoverArt !== '') params.set('has_cover_art', state.filterState.hasCoverArt);
   if (state.filterState.q) params.set('q', state.filterState.q);
+  return params;
+}
+
+export function buildListParams() {
+  const params = buildFilterParams();
   if (state.sortState.by) params.set('sort', state.sortState.by);
   params.set('order', state.sortState.desc ? 'desc' : 'asc');
   params.set('limit', String(state.pageState.limit));

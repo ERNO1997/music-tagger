@@ -76,10 +76,10 @@ func NewLibraryHandler(store usecases.TrackingStore) *LibraryHandler {
 	return &LibraryHandler{store: store}
 }
 
-// List returns a filtered, sorted, paginated page of tracked records.
-// Query parameters: status, tagged, relocated, has_lyrics, has_cover_art,
-// q (search), sort, order (asc/desc), limit, offset.
-func (h *LibraryHandler) List(c *fiber.Ctx) error {
+// parseLibraryFilter parses the status/tagged/relocated/has_lyrics/
+// has_cover_art/q query parameters shared by every endpoint that narrows
+// the tracked library by LibraryFilter.
+func parseLibraryFilter(c *fiber.Ctx) (usecases.LibraryFilter, error) {
 	filter := usecases.LibraryFilter{
 		Status: c.Query("status"),
 		Search: c.Query("q"),
@@ -87,42 +87,43 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 	if v := c.Query("tagged"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "tagged must be a boolean")
+			return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "tagged must be a boolean")
 		}
 		filter.Tagged = &b
 	}
 	if v := c.Query("relocated"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "relocated must be a boolean")
+			return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "relocated must be a boolean")
 		}
 		filter.Relocated = &b
 	}
 	if v := c.Query("has_lyrics"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "has_lyrics must be a boolean")
+			return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "has_lyrics must be a boolean")
 		}
 		filter.HasLyrics = &b
 	}
 	if v := c.Query("has_cover_art"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "has_cover_art must be a boolean")
+			return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "has_cover_art must be a boolean")
 		}
 		filter.HasCoverArt = &b
 	}
+	return filter, nil
+}
 
-	sort := usecases.LibrarySort{
-		By:   c.Query("sort"),
-		Desc: c.Query("order") == "desc",
-	}
-
-	limit := defaultLibraryLimit
+// parseLibraryPage parses the limit/offset query parameters shared by every
+// paginated library-listing endpoint, defaulting and capping limit the
+// same way GET /api/v1/library always has.
+func parseLibraryPage(c *fiber.Ctx) (limit, offset int, err error) {
+	limit = defaultLibraryLimit
 	if v := c.Query("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "limit must be a positive integer")
+			return 0, 0, fiber.NewError(fiber.StatusBadRequest, "limit must be a positive integer")
 		}
 		limit = n
 	}
@@ -130,13 +131,34 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 		limit = maxLibraryLimit
 	}
 
-	offset := 0
+	offset = 0
 	if v := c.Query("offset"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "offset must be a non-negative integer")
+			return 0, 0, fiber.NewError(fiber.StatusBadRequest, "offset must be a non-negative integer")
 		}
 		offset = n
+	}
+	return limit, offset, nil
+}
+
+// List returns a filtered, sorted, paginated page of tracked records.
+// Query parameters: status, tagged, relocated, has_lyrics, has_cover_art,
+// q (search), sort, order (asc/desc), limit, offset.
+func (h *LibraryHandler) List(c *fiber.Ctx) error {
+	filter, err := parseLibraryFilter(c)
+	if err != nil {
+		return err
+	}
+
+	sort := usecases.LibrarySort{
+		By:   c.Query("sort"),
+		Desc: c.Query("order") == "desc",
+	}
+
+	limit, offset, err := parseLibraryPage(c)
+	if err != nil {
+		return err
 	}
 
 	records, total, err := h.store.QueryPage(c.Context(), filter, sort, limit, offset)
