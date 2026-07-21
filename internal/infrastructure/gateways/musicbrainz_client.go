@@ -3,8 +3,10 @@ package gateways
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -82,11 +84,17 @@ func (c *MusicBrainzClient) Lookup(ctx context.Context, recordingID string) (use
 	if c.UserAgent == "" {
 		return usecases.RecordingMetadata{}, domain.ErrMusicBrainzNotConfigured
 	}
+	return c.resolveRecording(ctx, recordingID)
+}
 
+// resolveRecording fetches one recording ID's full canonical metadata —
+// the shared core of Lookup, also reused by Search to resolve each
+// free-text search hit to the same metadata shape.
+func (c *MusicBrainzClient) resolveRecording(ctx context.Context, recordingID string) (usecases.RecordingMetadata, error) {
 	c.waitForRateGate()
 
-	url := fmt.Sprintf("%s/recording/%s?inc=releases+media+release-groups+artist-credits&fmt=json", musicBrainzBaseURL, recordingID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	reqURL := fmt.Sprintf("%s/recording/%s?inc=releases+media+release-groups+artist-credits&fmt=json", musicBrainzBaseURL, recordingID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return usecases.RecordingMetadata{}, fmt.Errorf("building MusicBrainz request: %w", err)
 	}
@@ -132,6 +140,119 @@ func (c *MusicBrainzClient) Lookup(ctx context.Context, recordingID string) (use
 		ReleaseGroupMBID: releaseGroupID,
 		ArtistMBID:       firstArtistID(rec.ArtistCredit),
 	}, nil
+}
+
+type mbSearchResponse struct {
+	Recordings []mbSearchHit `json:"recordings"`
+}
+
+type mbSearchHit struct {
+	ID string `json:"id"`
+}
+
+// Search resolves a free-text query directly to candidate recordings,
+// independent of any AcoustID fingerprint match. It first queries
+// MusicBrainz's recording search endpoint for matching recording IDs
+// (already ranked by MusicBrainz's own relevance order), then resolves
+// each one to full metadata via the same path Lookup uses. A hit with no
+// resolvable release (e.g. a bare instrumental entry) is skipped rather
+// than aborting the whole search — mirroring how tied-recording
+// disambiguation already tolerates individual unresolvable recordings.
+func (c *MusicBrainzClient) Search(ctx context.Context, query string, limit int) ([]usecases.RecordingMetadata, error) {
+	if c.UserAgent == "" {
+		return nil, domain.ErrMusicBrainzNotConfigured
+	}
+
+	c.waitForRateGate()
+
+	reqURL := fmt.Sprintf("%s/recording?query=%s&fmt=json&limit=%d", musicBrainzBaseURL, url.QueryEscape(query), limit)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building MusicBrainz search request: %w", err)
+	}
+	req.Header.Set("User-Agent", c.UserAgent)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("MusicBrainz search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("MusicBrainz search error: HTTP %d", resp.StatusCode)
+	}
+
+	var body mbSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding MusicBrainz search response: %w", err)
+	}
+
+	var results []usecases.RecordingMetadata
+	for _, hit := range body.Recordings {
+		metadata, err := c.resolveRecording(ctx, hit.ID)
+		if err != nil {
+			if errors.Is(err, domain.ErrNoMusicBrainzRelease) {
+				continue
+			}
+			return nil, err
+		}
+		results = append(results, metadata)
+	}
+	return results, nil
+}
+
+type mbReleaseGroupReleases struct {
+	Releases []mbReleaseGroupReleaseSummary `json:"releases"`
+}
+
+type mbReleaseGroupReleaseSummary struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+	Date   string `json:"date"`
+}
+
+// Releases resolves a release-group's sibling releases, for browsing
+// alternate cover art across editions.
+func (c *MusicBrainzClient) Releases(ctx context.Context, releaseGroupMBID string) ([]usecases.ReleaseGroupRelease, error) {
+	if c.UserAgent == "" {
+		return nil, domain.ErrMusicBrainzNotConfigured
+	}
+
+	c.waitForRateGate()
+
+	url := fmt.Sprintf("%s/release-group/%s?inc=releases&fmt=json", musicBrainzBaseURL, releaseGroupMBID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building MusicBrainz request: %w", err)
+	}
+	req.Header.Set("User-Agent", c.UserAgent)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("MusicBrainz request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("MusicBrainz error: HTTP %d", resp.StatusCode)
+	}
+
+	var body mbReleaseGroupReleases
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding MusicBrainz response: %w", err)
+	}
+
+	releases := make([]usecases.ReleaseGroupRelease, 0, len(body.Releases))
+	for _, r := range body.Releases {
+		releases = append(releases, usecases.ReleaseGroupRelease{
+			ReleaseMBID: r.ID,
+			Title:       r.Title,
+			Status:      r.Status,
+			Date:        r.Date,
+		})
+	}
+	return releases, nil
 }
 
 // selectRelease prefers a release whose release-group primary type is
@@ -231,3 +352,9 @@ func (c *MusicBrainzClient) waitForRateGate() {
 		time.Sleep(wait)
 	}
 }
+
+var (
+	_ usecases.MusicBrainzLookup            = (*MusicBrainzClient)(nil)
+	_ usecases.MusicBrainzReleaseGroupLookup = (*MusicBrainzClient)(nil)
+	_ usecases.MusicBrainzSearch             = (*MusicBrainzClient)(nil)
+)

@@ -10,6 +10,7 @@ const (
 	StatusNew        TrackingStatus = "new"
 	StatusIdentified TrackingStatus = "identified"
 	StatusNotFound   TrackingStatus = "not_found"
+	StatusAmbiguous  TrackingStatus = "ambiguous"
 	StatusMissing    TrackingStatus = "missing"
 )
 
@@ -22,9 +23,20 @@ type FileRecord struct {
 	DurationSeconds  float64
 	Size             int64
 	ModTime          int64          // Unix seconds
-	Status           TrackingStatus // one of StatusNew, StatusIdentified, StatusNotFound
+	Status           TrackingStatus // one of StatusNew, StatusIdentified, StatusNotFound, StatusAmbiguous
 	Missing          bool
 	FingerprintError string // non-empty when the most recent fingerprint attempt failed
+
+	// RawTitle/RawArtist/RawAlbum/RawAlbumArtist are a snapshot of the
+	// file's own embedded tags, captured during scan — independent of, and
+	// not to be confused with, resolved (AcoustID/MusicBrainz) metadata
+	// below. Populated for new/changed files when available; blank if the
+	// file has no such tags or they couldn't be read. Never written by
+	// identification and never used as an identification signal.
+	RawTitle       string
+	RawArtist      string
+	RawAlbum       string
+	RawAlbumArtist string
 
 	// Resolved metadata, populated only once Status is StatusIdentified.
 	Artist        string

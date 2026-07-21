@@ -45,14 +45,17 @@ func main() {
 	}
 	defer store.Close()
 
-	fingerprinter := filestat.NewFpcalcRunner()
-	scanner := usecases.NewScanLocalVolume(fingerprinter, store)
+	durationReader := filestat.NewTagLibDurationReader()
+	rawTagReader := filestat.NewTagLibRawTagReader()
+	scanner := usecases.NewScanLocalVolume(durationReader, rawTagReader, store)
 	refreshManager := usecases.NewRefreshManager(scanner, musicRoot)
 
+	fingerprinter := filestat.NewFpcalcRunner()
 	acoustIDClient := gateways.NewAcoustIDClient(acoustIDKey)
 	musicBrainzClient := gateways.NewMusicBrainzClient(musicBrainzUserAgent)
-	identifyFile := usecases.NewIdentifyFile(acoustIDClient, musicBrainzClient, store)
-	identifyManager := usecases.NewIdentifyManager(identifyFile, store)
+	identifyFile := usecases.NewIdentifyFile(acoustIDClient, musicBrainzClient, fingerprinter, store)
+	identifyManager := usecases.NewIdentifyManager(identifyFile)
+	manualSearch := usecases.NewManualSearch(musicBrainzClient, store)
 
 	var identifyConfigErr error
 	if acoustIDKey == "" || musicBrainzUserAgent == "" {
@@ -67,6 +70,7 @@ func main() {
 	lrclibClient := gateways.NewLRCLIBClient(musicBrainzUserAgent)
 	enrichFile := usecases.NewEnrichFile(coverArtClient, coverArtStore, lrclibClient, store)
 	enrichManager := usecases.NewEnrichManager(enrichFile, store)
+	browseCoverArt := usecases.NewBrowseCoverArt(musicBrainzClient, coverArtClient, coverArtStore, store)
 
 	tagger := filestat.NewTagLibTagger()
 	tagFile := usecases.NewTagFile(tagger, store)
@@ -81,7 +85,7 @@ func main() {
 
 	libraryHandler := v1.NewLibraryHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
-	identifyHandler := v1.NewIdentifyHandler(identifyManager, store, identifyConfigErr)
+	identifyHandler := v1.NewIdentifyHandler(identifyManager, manualSearch, store, identifyConfigErr)
 	enrichHandler := v1.NewEnrichHandler(enrichManager, store)
 	coverHandler := v1.NewCoverHandler(store)
 	lyricsHandler := v1.NewLyricsHandler(store)
@@ -89,11 +93,13 @@ func main() {
 	embeddedTagsHandler := v1.NewEmbeddedTagsHandler(tagFile)
 	relocateHandler := v1.NewRelocateHandler(relocateManager, store)
 	fingerprintHandler := v1.NewFingerprintHandler(store)
+	candidatesHandler := v1.NewCandidatesHandler(store)
+	coverBrowseHandler := v1.NewCoverBrowseHandler(browseCoverArt)
 	deleteHandler := v1.NewDeleteHandler(deleteMissingFile)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, deleteHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

@@ -31,6 +31,14 @@ type LibraryEntry struct {
 	TrackNumber     int     `json:"track_number,omitempty"`
 	RecordingMBID   string  `json:"recording_mbid,omitempty"`
 
+	// RawTitle/RawArtist/RawAlbum/RawAlbumArtist are the file's own
+	// embedded tags, captured during scan — independent of resolved
+	// metadata above, included whenever captured regardless of status.
+	RawTitle       string `json:"raw_title,omitempty"`
+	RawArtist      string `json:"raw_artist,omitempty"`
+	RawAlbum       string `json:"raw_album,omitempty"`
+	RawAlbumArtist string `json:"raw_album_artist,omitempty"`
+
 	AlbumArtist      string `json:"album_artist,omitempty"`
 	Year             int    `json:"year,omitempty"`
 	DiscNumber       int    `json:"disc_number,omitempty"`
@@ -69,8 +77,8 @@ func NewLibraryHandler(store usecases.TrackingStore) *LibraryHandler {
 }
 
 // List returns a filtered, sorted, paginated page of tracked records.
-// Query parameters: status, tagged, relocated, q (search), sort, order
-// (asc/desc), limit, offset.
+// Query parameters: status, tagged, relocated, has_lyrics, has_cover_art,
+// q (search), sort, order (asc/desc), limit, offset.
 func (h *LibraryHandler) List(c *fiber.Ctx) error {
 	filter := usecases.LibraryFilter{
 		Status: c.Query("status"),
@@ -89,6 +97,20 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "relocated must be a boolean")
 		}
 		filter.Relocated = &b
+	}
+	if v := c.Query("has_lyrics"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "has_lyrics must be a boolean")
+		}
+		filter.HasLyrics = &b
+	}
+	if v := c.Query("has_cover_art"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "has_cover_art must be a boolean")
+		}
+		filter.HasCoverArt = &b
 	}
 
 	sort := usecases.LibrarySort{
@@ -142,6 +164,11 @@ func libraryEntryFrom(r domain.FileRecord) LibraryEntry {
 		Title:           r.Title,
 		TrackNumber:     r.TrackNumber,
 		RecordingMBID:   r.RecordingMBID,
+
+		RawTitle:       r.RawTitle,
+		RawArtist:      r.RawArtist,
+		RawAlbum:       r.RawAlbum,
+		RawAlbumArtist: r.RawAlbumArtist,
 
 		AlbumArtist:      r.AlbumArtist,
 		Year:             r.Year,

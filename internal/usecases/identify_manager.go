@@ -18,41 +18,29 @@ type IdentifyStatus = JobStatus
 // resources and neither needs to block the other.
 type IdentifyManager struct {
 	identify *IdentifyFile
-	store    TrackingStore
 	job      JobManager
 }
 
-func NewIdentifyManager(identify *IdentifyFile, store TrackingStore) *IdentifyManager {
-	return &IdentifyManager{identify: identify, store: store}
+func NewIdentifyManager(identify *IdentifyFile) *IdentifyManager {
+	return &IdentifyManager{identify: identify}
 }
 
 // Start begins identifying paths in the background if no identify job is
 // currently running. It returns ErrIdentifyInProgress otherwise. A
-// per-file failure (unknown path, no fingerprint, or gateway error) is
-// logged and does not abort the rest of the job.
+// per-file failure (unknown path, fingerprint computation failure, or
+// gateway error) is logged and does not abort the rest of the job.
 func (m *IdentifyManager) Start(paths []string) error {
 	return m.job.Start(func(report func(processed, total int)) {
 		total := len(paths)
 		report(0, total)
 
-		records, err := m.store.LoadAll(context.Background())
-		if err != nil {
-			log.Printf("identify job: loading tracked records: %v", err)
-			report(total, total)
-			return
-		}
-
 		for i, path := range paths {
-			rec, ok := records[path]
+			skipped, err := m.identify.Identify(context.Background(), path)
 			switch {
-			case !ok:
-				log.Printf("identify job: %s is not a tracked file, skipping", path)
-			case rec.Fingerprint == "":
-				log.Printf("identify job: %s has no usable fingerprint, skipping", path)
-			default:
-				if err := m.identify.Identify(context.Background(), path, rec.Fingerprint, rec.DurationSeconds); err != nil {
-					log.Printf("identify job: %s: %v", path, err)
-				}
+			case err != nil:
+				log.Printf("identify job: %s: %v", path, err)
+			case skipped:
+				log.Printf("identify job: %s skipped (not tracked, or fingerprinting failed)", path)
 			}
 			report(i+1, total)
 		}
@@ -62,4 +50,12 @@ func (m *IdentifyManager) Start(paths []string) error {
 // Status returns a snapshot of the current/most recent identify job.
 func (m *IdentifyManager) Status() IdentifyStatus {
 	return m.job.Status()
+}
+
+// ResolveAmbiguous records candidate recordingMBID as path's resolved
+// identification, delegating to the underlying IdentifyFile. found is false
+// (with a nil error) when recordingMBID doesn't match any of path's stored
+// candidates.
+func (m *IdentifyManager) ResolveAmbiguous(ctx context.Context, path, recordingMBID string) (found bool, err error) {
+	return m.identify.ResolveAmbiguous(ctx, path, recordingMBID)
 }

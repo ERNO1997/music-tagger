@@ -12,6 +12,7 @@ type SelectionFilter struct {
 	Status    string `json:"status"`
 	Tagged    *bool  `json:"tagged"`
 	Relocated *bool  `json:"relocated"`
+	HasLyrics *bool  `json:"has_lyrics"`
 	Search    string `json:"q"`
 }
 
@@ -46,6 +47,7 @@ func resolveSelection(c *fiber.Ctx, store usecases.TrackingStore) ([]string, err
 		Status:    req.Filter.Status,
 		Tagged:    req.Filter.Tagged,
 		Relocated: req.Filter.Relocated,
+		HasLyrics: req.Filter.HasLyrics,
 		Search:    req.Filter.Search,
 	}
 	paths, err := store.QueryPaths(c.Context(), filter)

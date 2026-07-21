@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"music-tagger/internal/usecases"
@@ -36,6 +37,7 @@ type coverArtImage struct {
 }
 
 type coverArtThumbnails struct {
+	Small string `json:"small"`
 	Large string `json:"large"`
 }
 
@@ -67,6 +69,35 @@ func (c *CoverArtClient) Lookup(ctx context.Context, releaseMBID, releaseGroupMB
 		return nil, nil
 	}
 
+	return c.download(ctx, imageURL)
+}
+
+// FrontImage returns a single release's front-cover thumbnail/image URLs,
+// without downloading its bytes — used to browse a release-group's sibling
+// editions for a better cover than Lookup's single automatic choice.
+// found=false (nil error) means that release has no front image uploaded.
+func (c *CoverArtClient) FrontImage(ctx context.Context, releaseMBID string) (thumbnailURL, imageURL string, found bool, err error) {
+	images, err := c.fetchImages(ctx, "release", releaseMBID)
+	if err != nil {
+		return "", "", false, err
+	}
+	for _, img := range images {
+		if img.Front {
+			return upgradeToHTTPS(img.Thumbnails.Small), upgradeToHTTPS(img.Thumbnails.Large), true, nil
+		}
+	}
+	return "", "", false, nil
+}
+
+// Download fetches arbitrary image bytes from a Cover Art Archive image
+// URL (as returned by FrontImage). Rejects any URL outside Cover Art
+// Archive's own host, since imageURL round-trips through API/UI input on
+// the browse-and-choose path rather than being entirely server-derived.
+func (c *CoverArtClient) Download(ctx context.Context, imageURL string) ([]byte, error) {
+	parsed, err := url.Parse(imageURL)
+	if err != nil || parsed.Hostname() != "coverartarchive.org" {
+		return nil, fmt.Errorf("refusing to download image from untrusted host: %s", imageURL)
+	}
 	return c.download(ctx, imageURL)
 }
 
@@ -117,11 +148,15 @@ func selectFrontImageURL(images []coverArtImage) string {
 	return images[0].Thumbnails.Large
 }
 
+// upgradeToHTTPS replaces a leading http:// with https:// — Cover Art
+// Archive's JSON returns http:// URLs, but the encrypted path is confirmed
+// to work identically (it redirects through to archive.org either way).
+func upgradeToHTTPS(rawURL string) string {
+	return strings.Replace(rawURL, "http://", "https://", 1)
+}
+
 func (c *CoverArtClient) download(ctx context.Context, imageURL string) ([]byte, error) {
-	// Cover Art Archive's JSON returns http:// URLs; always upgrade to
-	// https:// before requesting, since the encrypted path is confirmed to
-	// work identically (it redirects through to archive.org either way).
-	imageURL = strings.Replace(imageURL, "http://", "https://", 1)
+	imageURL = upgradeToHTTPS(imageURL)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
 	if err != nil {
@@ -148,4 +183,7 @@ func (c *CoverArtClient) download(ctx context.Context, imageURL string) ([]byte,
 	return data, nil
 }
 
-var _ usecases.CoverArtLookup = (*CoverArtClient)(nil)
+var (
+	_ usecases.CoverArtLookup  = (*CoverArtClient)(nil)
+	_ usecases.CoverArtBrowser = (*CoverArtClient)(nil)
+)

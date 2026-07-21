@@ -45,7 +45,7 @@ type acoustIDRecording struct {
 	ID string `json:"id"`
 }
 
-func (c *AcoustIDClient) Lookup(ctx context.Context, fingerprint string, durationSeconds float64) ([]usecases.AcoustIDMatch, error) {
+func (c *AcoustIDClient) Lookup(ctx context.Context, fingerprint string, durationSeconds float64) ([]usecases.AcoustIDResult, error) {
 	if c.APIKey == "" {
 		return nil, domain.ErrAcoustIDNotConfigured
 	}
@@ -79,18 +79,23 @@ func (c *AcoustIDClient) Lookup(ctx context.Context, fingerprint string, duratio
 		return nil, fmt.Errorf("AcoustID error: HTTP %d", resp.StatusCode)
 	}
 
-	var matches []usecases.AcoustIDMatch
+	var results []usecases.AcoustIDResult
 	for _, result := range body.Results {
+		var recordingIDs []string
 		for _, recording := range result.Recordings {
 			if recording.ID == "" {
 				continue
 			}
-			matches = append(matches, usecases.AcoustIDMatch{
-				RecordingID: recording.ID,
-				Score:       result.Score,
-			})
+			recordingIDs = append(recordingIDs, recording.ID)
 		}
+		if len(recordingIDs) == 0 {
+			continue
+		}
+		results = append(results, usecases.AcoustIDResult{
+			Score:        result.Score,
+			RecordingIDs: recordingIDs,
+		})
 	}
 
-	return matches, nil
+	return results, nil
 }

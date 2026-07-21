@@ -2,6 +2,7 @@ package usecases
 
 import (
 	"context"
+	"time"
 
 	"music-tagger/internal/domain"
 )
@@ -11,6 +12,31 @@ import (
 // any pre-existing embedded tags.
 type Fingerprinter interface {
 	Fingerprint(ctx context.Context, path string) (domain.Fingerprint, error)
+}
+
+// DurationReader reads a single audio file's duration from its own
+// container headers — a cheap read, unlike Fingerprinter, which requires a
+// full audio decode.
+type DurationReader interface {
+	ReadDuration(ctx context.Context, path string) (time.Duration, error)
+}
+
+// RawTags is a snapshot of a file's own embedded tags, read directly from
+// disk — independent of resolved (AcoustID/MusicBrainz) metadata. Never
+// used as an identification signal (see the Acoustic-First Identification
+// Rule); purely for display and search before or absent identification.
+type RawTags struct {
+	Title       string
+	Artist      string
+	Album       string
+	AlbumArtist string
+}
+
+// RawTagReader reads a single audio file's own embedded title/artist/
+// album/album-artist tags — a cheap, local, no-decode read, same cost
+// class as DurationReader.
+type RawTagReader interface {
+	ReadRawTags(ctx context.Context, path string) (RawTags, error)
 }
 
 // TrackingStore persists per-file discovery/identification state across
@@ -60,6 +86,30 @@ type TrackingStore interface {
 	// tagErr is empty on a successful tag write.
 	RecordTagged(ctx context.Context, path string, tagged bool, tagErr string) error
 
+	// RecordFingerprint updates one file's fingerprint, duration, and
+	// fingerprint error, without altering its status, resolved metadata, or
+	// any other field. Called once by IdentifyFile.Identify after it
+	// computes (or fails to compute) a fingerprint on demand.
+	RecordFingerprint(ctx context.Context, path string, fingerprint string, durationSeconds float64, fingerprintErr string) error
+
+	// RecordAmbiguous replaces any existing stored candidates for path with
+	// candidates, sets its status to StatusAmbiguous, and clears its
+	// resolved metadata and enrichment/tagged/relocated outcomes (mirroring
+	// RecordIdentification's not-found invalidation), in one commit.
+	RecordAmbiguous(ctx context.Context, path string, candidates []RecordingMetadata) error
+
+	// GetCandidates returns one file's stored candidate list (populated only
+	// while its status is StatusAmbiguous) — a single indexed lookup, not a
+	// full LoadAll, used to serve the details view's candidate picker.
+	GetCandidates(ctx context.Context, path string) ([]RecordingMetadata, error)
+
+	// ResolveAmbiguous records the stored candidate matching recordingMBID as
+	// path's resolved identification (exactly as RecordIdentification would
+	// for a direct success) and discards its other stored candidates, in one
+	// commit. found is false (with a nil error) when recordingMBID doesn't
+	// match any of path's stored candidates — nothing is changed in that case.
+	ResolveAmbiguous(ctx context.Context, path, recordingMBID string) (found bool, err error)
+
 	// RecordFileStat updates one file's stored size and modification time,
 	// without altering any other field. Used after a successful tag write:
 	// writing tags changes the file's own size/mtime on disk, and without
@@ -105,10 +155,16 @@ type LibraryFilter struct {
 	// other status means Missing is clear and Status matches.
 	Status string
 
-	// Tagged and Relocated are nil (no filter) or a pointer to the exact
-	// boolean value each matching record's field must equal.
-	Tagged    *bool
-	Relocated *bool
+	// Tagged, Relocated, HasLyrics, and HasCoverArt are nil (no filter) or a
+	// pointer to the exact boolean value each matching record's field must
+	// equal. HasLyrics matches a record whose stored plain or synced
+	// lyrics are non-empty (true) or both empty (false). HasCoverArt
+	// matches a record whose stored cover art path is non-empty (true) or
+	// empty (false).
+	Tagged      *bool
+	Relocated   *bool
+	HasLyrics   *bool
+	HasCoverArt *bool
 
 	// Search is a case-insensitive substring match against path, artist,
 	// album, and title. Empty means no filter.
@@ -139,18 +195,23 @@ type BulkApply struct {
 	ReappearedPaths []string
 }
 
-// AcoustIDMatch is one candidate MusicBrainz recording resolved from a
-// fingerprint, ranked by match confidence.
-type AcoustIDMatch struct {
-	RecordingID string
-	Score       float64
+// AcoustIDResult is one scored match from AcoustID's fingerprint index.
+// RecordingIDs holds every MusicBrainz recording tied to this one result —
+// usually exactly one, but a single acoustic fingerprint can map to more
+// than one distinct recording (a reissue, a compilation reusing the same
+// master, etc.), and callers need to tell that apart from an unambiguous
+// single-recording match rather than having it silently flattened away.
+type AcoustIDResult struct {
+	Score        float64
+	RecordingIDs []string
 }
 
 // AcoustIDLookup resolves a fingerprint + duration to candidate MusicBrainz
-// Recording IDs. An empty, nil-error result means AcoustID found no match —
-// distinct from a returned error, which means the lookup itself failed.
+// Recording IDs, grouped by result and ranked by descending score. An
+// empty, nil-error result means AcoustID found no match — distinct from a
+// returned error, which means the lookup itself failed.
 type AcoustIDLookup interface {
-	Lookup(ctx context.Context, fingerprint string, durationSeconds float64) ([]AcoustIDMatch, error)
+	Lookup(ctx context.Context, fingerprint string, durationSeconds float64) ([]AcoustIDResult, error)
 }
 
 // RecordingMetadata is the canonical metadata MusicBrainz resolves for a
@@ -188,6 +249,16 @@ type IdentificationResult struct {
 	Metadata RecordingMetadata     // populated only when Status is StatusIdentified
 }
 
+// MusicBrainzSearch resolves a free-text query directly to candidate
+// recordings, independent of any AcoustID fingerprint match — used for
+// manual, user-initiated identification when a file's audio can't be
+// (or wasn't correctly) fingerprint-matched. An empty, nil-error result
+// means the query matched nothing — distinct from a returned error, which
+// means the search itself failed.
+type MusicBrainzSearch interface {
+	Search(ctx context.Context, query string, limit int) ([]RecordingMetadata, error)
+}
+
 // CoverArtLookup resolves a MusicBrainz Release ID to front-cover image
 // bytes via Cover Art Archive, falling back to the Release-Group ID if the
 // specific release has no art (a release-group can have many sibling
@@ -197,6 +268,51 @@ type IdentificationResult struct {
 // itself failed.
 type CoverArtLookup interface {
 	Lookup(ctx context.Context, releaseMBID, releaseGroupMBID string) ([]byte, error)
+}
+
+// ReleaseGroupRelease is one sibling release belonging to a release-group,
+// as returned by MusicBrainzReleaseGroupLookup — used to browse alternate
+// cover art across a release-group's editions.
+type ReleaseGroupRelease struct {
+	ReleaseMBID string
+	Title       string
+	Status      string
+	Date        string
+}
+
+// MusicBrainzReleaseGroupLookup resolves a release-group's sibling
+// releases. Implementations must enforce the same centralized rate limit
+// as MusicBrainzLookup, since both hit the same MusicBrainz web service.
+type MusicBrainzReleaseGroupLookup interface {
+	Releases(ctx context.Context, releaseGroupMBID string) ([]ReleaseGroupRelease, error)
+}
+
+// CoverArtCandidate is one release's front-cover image, offered as an
+// alternative when browsing a release-group's sibling editions for a
+// better cover than CoverArtLookup's single automatic choice.
+type CoverArtCandidate struct {
+	ReleaseMBID  string
+	ReleaseTitle string
+	ThumbnailURL string // small preview, for a browsing grid
+	ImageURL     string // same size class CoverArtLookup embeds, passed back to Download when chosen
+}
+
+// CoverArtBrowser lists a release's front-cover image (without downloading
+// its bytes) and downloads a specifically chosen image's bytes. A separate
+// capability from CoverArtLookup, which only ever returns one
+// automatically-chosen image.
+type CoverArtBrowser interface {
+	// FrontImage returns a release's front-cover thumbnail/image URLs.
+	// found=false (nil error) means that release has no front image
+	// uploaded — distinct from a returned error, which means the lookup
+	// itself failed.
+	FrontImage(ctx context.Context, releaseMBID string) (thumbnailURL, imageURL string, found bool, err error)
+
+	// Download fetches the image bytes at imageURL (as returned by
+	// FrontImage). Implementations must reject a URL outside Cover Art
+	// Archive's own domain, since imageURL round-trips through API/UI
+	// input on the Choose path.
+	Download(ctx context.Context, imageURL string) ([]byte, error)
 }
 
 // LyricsLookup resolves an already-known artist/title/album/duration to

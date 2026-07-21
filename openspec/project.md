@@ -404,3 +404,9 @@ To keep the system's scope well-bounded, the following are explicitly **out of s
 - Non-English lyrics sourcing (Genius integration is English-only by design).
 - Audio transcoding or format conversion (`ffmpeg` is bundled solely for auxiliary audio inspection, not format conversion, in v1).
 - Persistent storage of background *task run* history — the `task_id`/status registry (§3, `taskmanager.go`) remains in-memory and scoped to the process lifetime. This is distinct from the SQLite-backed file-tracking store (§2.4), which persists file identification state across restarts by design.
+
+## 7. Future Enhancements (Deferred, Not Rejected)
+
+Unlike §6, these are wanted eventually — just deliberately scoped out of the changes that surfaced them, because each is a genuinely new capability rather than a small fix. Recorded here so the intent isn't lost between changes.
+
+- **Manual per-file search-and-select.** A per-song (not bulk) action letting a user manually search MusicBrainz/AcoustID candidates, LRCLIB lyrics candidates, and cover art candidates, and pick the correct one themselves — an escape hatch for cases where automatic identification is wrong, ambiguous, or (per the `improve-match-quality` change's confidence threshold) deliberately declined to guess. Requires a MusicBrainz **text search** capability that doesn't exist yet (today the app only resolves fingerprint → recording, never searches by typed artist/title), multi-candidate lyrics search (LRCLIB's fuzzy `/api/search`, already used internally by `improve-match-quality`'s exact-match fallback, but not yet exposed as multiple user-facing choices), and multi-release cover art candidates (today only one release/release-group is ever queried, per §2.4's single-canonical-metadata scope).

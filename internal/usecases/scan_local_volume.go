@@ -20,8 +20,8 @@ type RefreshSummary struct {
 	Errors     int
 }
 
-// pendingFile is a candidate discovered on disk during pass 1 that needs
-// fingerprinting in pass 2, because it's new or has changed since last seen.
+// pendingFile is a candidate discovered on disk during pass 1 that needs a
+// duration read in pass 2, because it's new or has changed since last seen.
 type pendingFile struct {
 	path    string
 	format  domain.Format
@@ -38,24 +38,27 @@ const upsertChunkSize = 25
 
 // ScanLocalVolume performs a two-pass refresh of the mounted /music volume:
 // pass 1 cheaply stats every file and diffs against the tracking store to
-// classify it as new/changed/unchanged/missing without invoking fpcalc;
-// pass 2 fingerprints only the new/changed set, committing in chunks (see
+// classify it as new/changed/unchanged/missing; pass 2 reads duration and a
+// raw tag snapshot only for the new/changed set, committing in chunks (see
 // upsertChunkSize) rather than one commit per file or one for the whole
-// refresh. It performs no writes to /music itself and no upstream network
-// calls.
+// refresh. Fingerprint computation never happens during a refresh — it
+// happens lazily during identification instead. It performs no writes to
+// /music itself and no upstream network calls.
 type ScanLocalVolume struct {
-	fingerprinter Fingerprinter
-	store         TrackingStore
+	durationReader DurationReader
+	rawTagReader   RawTagReader
+	store          TrackingStore
 }
 
-func NewScanLocalVolume(fingerprinter Fingerprinter, store TrackingStore) *ScanLocalVolume {
-	return &ScanLocalVolume{fingerprinter: fingerprinter, store: store}
+func NewScanLocalVolume(durationReader DurationReader, rawTagReader RawTagReader, store TrackingStore) *ScanLocalVolume {
+	return &ScanLocalVolume{durationReader: durationReader, rawTagReader: rawTagReader, store: store}
 }
 
 // Refresh walks root, classifies every candidate file against the tracking
-// store, fingerprints only the new/changed set (reporting progress via
-// onProgress, which may be nil), and commits the outcome in one batched
-// transaction. A missing root yields an empty-effect refresh, not an error.
+// store, reads duration and a raw tag snapshot only for the new/changed
+// set (reporting progress via onProgress, which may be nil), and commits
+// the outcome in one batched transaction. A missing root yields an
+// empty-effect refresh, not an error.
 func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress func(processed, total int)) (RefreshSummary, error) {
 	summary := RefreshSummary{}
 
@@ -65,7 +68,7 @@ func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress f
 	}
 
 	seen := make(map[string]bool, len(tracked))
-	var toFingerprint []pendingFile
+	var toRead []pendingFile
 	var reappeared []string
 
 	if _, statErr := os.Stat(root); statErr == nil {
@@ -94,9 +97,9 @@ func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress f
 			existing, wasTracked := tracked[path]
 			switch {
 			case !wasTracked:
-				toFingerprint = append(toFingerprint, pendingFile{path, format, size, modTime})
+				toRead = append(toRead, pendingFile{path, format, size, modTime})
 			case existing.Size != size || existing.ModTime != modTime:
-				toFingerprint = append(toFingerprint, pendingFile{path, format, size, modTime})
+				toRead = append(toRead, pendingFile{path, format, size, modTime})
 			case existing.Missing:
 				reappeared = append(reappeared, path)
 				summary.Reappeared++
@@ -131,7 +134,7 @@ func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress f
 		}
 	}
 
-	total := len(toFingerprint)
+	total := len(toRead)
 	if onProgress != nil {
 		onProgress(0, total)
 	}
@@ -148,7 +151,7 @@ func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress f
 		return nil
 	}
 
-	for i, pf := range toFingerprint {
+	for i, pf := range toRead {
 		rec := domain.FileRecord{
 			Path:    pf.path,
 			Format:  pf.format,
@@ -157,13 +160,22 @@ func (s *ScanLocalVolume) Refresh(ctx context.Context, root string, onProgress f
 			Status:  domain.StatusNew,
 		}
 
-		fp, ferr := s.fingerprinter.Fingerprint(ctx, pf.path)
-		if ferr != nil {
-			rec.FingerprintError = ferr.Error()
+		duration, derr := s.durationReader.ReadDuration(ctx, pf.path)
+		if derr != nil {
+			rec.FingerprintError = derr.Error()
 			summary.Errors++
 		} else {
-			rec.Fingerprint = fp.Chroma
-			rec.DurationSeconds = fp.Duration.Seconds()
+			rec.DurationSeconds = duration.Seconds()
+		}
+
+		// Raw tags are a separate, independent read from duration — a
+		// failure here doesn't affect the duration already read above, and
+		// doesn't count as a second error against the same file.
+		if rawTags, rerr := s.rawTagReader.ReadRawTags(ctx, pf.path); rerr == nil {
+			rec.RawTitle = rawTags.Title
+			rec.RawArtist = rawTags.Artist
+			rec.RawAlbum = rawTags.Album
+			rec.RawAlbumArtist = rawTags.AlbumArtist
 		}
 
 		if _, ok := tracked[pf.path]; ok {

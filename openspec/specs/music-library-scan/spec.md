@@ -16,17 +16,25 @@ The system SHALL recursively walk the configured `/music` directory and identify
 - **THEN** those files SHALL be excluded from the scan result and SHALL NOT be passed to the fingerprinting component
 
 ### Requirement: Read-only scan report via API
-The system SHALL expose a `GET /api/v1/library` endpoint that returns a page of the currently tracked file list — path, format, duration, identification status, (once identified) resolved artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and (once enriched) a cover art indicator, a lyrics indicator, a tagged indicator, and a relocated indicator — read directly from the persistent tracking store (see the `file-tracking-store` capability), without performing a disk walk or fingerprinting on every call. A file's reported `path` SHALL always be its current, possibly-relocated location. The endpoint SHALL NOT write, move, rename, or otherwise modify any file under `/music`.
+The system SHALL expose a `GET /api/v1/library` endpoint that returns a page of the currently tracked file list — path, format, duration, identification status, a raw tag snapshot (title, artist, album, album artist as embedded in the file itself, when captured), (once identified) resolved artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and (once enriched) a cover art indicator, a lyrics indicator, a tagged indicator, and a relocated indicator — read directly from the persistent tracking store (see the `file-tracking-store` capability), without performing a disk walk or fingerprinting on every call. A file's reported `path` SHALL always be its current, possibly-relocated location. The endpoint SHALL NOT write, move, rename, or otherwise modify any file under `/music`.
 
-The endpoint SHALL accept optional query parameters: `status` (one of `new`, `identified`, `not_found`, `missing`, restricting results to that effective status), `tagged` and `relocated` (boolean, restricting to files with that outcome true or false), `q` (a case-insensitive substring search matched against path, artist, album, and title), `sort` (one of `path`, `status`, `artist`, `album`, `duration`, `year`) and `order` (`asc` or `desc`, defaulting to `asc`), and `limit`/`offset` for pagination. The response SHALL be a JSON object `{"total": <matching row count>, "entries": [...]}` rather than a bare array, so a client can render pagination controls without a separate count request. The `fingerprint` field, previously included per-row, SHALL NOT be included in this response — it is available on demand via a separate endpoint.
+The endpoint SHALL accept optional query parameters: `status` (one of `new`, `identified`, `not_found`, `ambiguous`, `missing`, restricting results to that effective status), `tagged`, `relocated`, `has_lyrics`, and `has_cover_art` (boolean, restricting to files with that outcome true or false), `q` (a case-insensitive substring search matched against path, artist, album, title, and raw title/artist/album), `sort` (one of `path`, `status`, `artist`, `album`, `duration`, `year`) and `order` (`asc` or `desc`, defaulting to `asc`), and `limit`/`offset` for pagination. The response SHALL be a JSON object `{"total": <matching row count>, "entries": [...]}` rather than a bare array, so a client can render pagination controls without a separate count request. The `fingerprint` field, previously included per-row, SHALL NOT be included in this response — it is available on demand via a separate endpoint.
 
 #### Scenario: Successful read of tracked state
 - **WHEN** a client issues `GET /api/v1/library` after at least one refresh has run
-- **THEN** the response SHALL be `200 OK` with a JSON object containing `total` and an `entries` array where each entry includes `path`, `format`, `duration_seconds`, `status`, and an `error` field populated only when that file's most recent fingerprint attempt failed
+- **THEN** the response SHALL be `200 OK` with a JSON object containing `total` and an `entries` array where each entry includes `path`, `format`, `duration_seconds`, `status`, and an `error` field populated only when that file's most recent duration-read attempt failed
 
 #### Scenario: Identified file includes resolved metadata
 - **WHEN** a client issues `GET /api/v1/library` and a tracked file has status `identified`
 - **THEN** that file's entry SHALL include its resolved artist, album artist, title, track number, release year (when available), disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs
+
+#### Scenario: Unidentified file includes its raw tag snapshot
+- **WHEN** a client issues `GET /api/v1/library` and a tracked file has a captured raw tag snapshot but no resolved metadata (status `new`, `not_found`, or `ambiguous`)
+- **THEN** that file's entry SHALL include whichever of raw title/artist/album/album-artist were captured, distinguishable from resolved metadata fields
+
+#### Scenario: Identified file's raw tag snapshot is still available alongside resolved metadata
+- **WHEN** a client issues `GET /api/v1/library` and a tracked file has both a raw tag snapshot and resolved metadata
+- **THEN** that file's entry SHALL include both, without the presence of resolved metadata suppressing the raw tag fields from the response
 
 #### Scenario: Enriched file includes a cover art indicator
 - **WHEN** a client issues `GET /api/v1/library` and a tracked file has a stored cover art path
@@ -64,9 +72,25 @@ The endpoint SHALL accept optional query parameters: `status` (one of `new`, `id
 - **WHEN** a client issues `GET /api/v1/library?tagged=false` or `?relocated=false`
 - **THEN** the response SHALL include only files whose tagged (or relocated) outcome matches the given boolean
 
+#### Scenario: Filtering by lyrics outcome
+- **WHEN** a client issues `GET /api/v1/library?has_lyrics=false`
+- **THEN** the response SHALL include only files whose stored plain and synced lyrics are both empty, and `total` SHALL reflect that filtered count
+
+#### Scenario: Filtering by cover art outcome
+- **WHEN** a client issues `GET /api/v1/library?has_cover_art=false`
+- **THEN** the response SHALL include only files with no stored cover art path, and `total` SHALL reflect that filtered count
+
+#### Scenario: Filtering by the ambiguous status
+- **WHEN** a client issues `GET /api/v1/library?status=ambiguous`
+- **THEN** the response SHALL include only files whose status is `ambiguous`, and `total` SHALL reflect that filtered count
+
 #### Scenario: Free-text search across path, artist, album, and title
 - **WHEN** a client issues `GET /api/v1/library?q=rasmus`
 - **THEN** the response SHALL include only files whose path, artist, album, or title contains that text, case-insensitively
+
+#### Scenario: Searching by raw tag data
+- **WHEN** a client issues `GET /api/v1/library?q=<text>` matching a tracked file's raw title, artist, or album but not its path or resolved metadata
+- **THEN** that file SHALL be included in the response
 
 #### Scenario: Sorting results
 - **WHEN** a client issues `GET /api/v1/library?sort=artist&order=desc`
@@ -81,11 +105,15 @@ The endpoint SHALL accept optional query parameters: `status` (one of `new`, `id
 - **THEN** the system SHALL apply the filter and search first, then sort, then paginate the result, consistently with `total` reflecting the post-filter, pre-pagination count
 
 ### Requirement: Web UI listing of scan results
-The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results as a table showing path, format, duration, identification status, a condensed resolved-metadata summary, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, and allow opening a full details view for any single row. It SHALL provide controls for filtering by status/tagged/relocated, free-text search, column sorting, and page navigation.
+The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` and renders one page of results as a table showing path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more rows (or all rows matching the current filter, across pages), provide bulk actions to identify, enrich, tag, and relocate the selected rows, provide a delete action for rows with status `missing`, provide a resolve action for rows with status `ambiguous`, provide a manual search action available from any row's details view regardless of status, and allow opening a full details view for any single row. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting, and page navigation.
 
 #### Scenario: Page loads scan results on open
 - **WHEN** a user opens the web UI in a browser
 - **THEN** the page SHALL call `GET /api/v1/library` and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present
+
+#### Scenario: An unidentified file's row shows its raw tag snapshot instead of blank metadata
+- **WHEN** a table row's file has status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
+- **THEN** the row's metadata summary SHALL show the raw title/artist/album, visually distinguished (e.g. styled or labeled differently) from a resolved-metadata summary shown for an `identified` row
 
 #### Scenario: Refresh trigger disabled while running
 - **WHEN** a refresh is currently running (whether started by this user, another tab, or automatically at server startup)
@@ -132,7 +160,7 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 - **THEN** the UI's relocate action SHALL be disabled, same as while a relocate job itself is running
 
 #### Scenario: Filtering, searching, and sorting the table
-- **WHEN** a user sets a status/tagged/relocated filter, enters search text, or clicks a sortable column header
+- **WHEN** a user sets a status/tagged/relocated/has-lyrics/has-cover-art filter, enters search text, or clicks a sortable column header
 - **THEN** the UI SHALL re-fetch `GET /api/v1/library` with the corresponding query parameters and re-render the table to reflect only the current page of matching, sorted results
 
 #### Scenario: Navigating between pages
@@ -159,15 +187,63 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` a
 - **WHEN** a row's status is not `missing`
 - **THEN** the UI SHALL NOT offer a delete action for that row
 
+#### Scenario: Filtering by lyrics outcome in the UI
+- **WHEN** a user sets the lyrics filter to "missing lyrics"
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_lyrics=false` and re-render the table accordingly
+
+#### Scenario: Filtering by cover art outcome in the UI
+- **WHEN** a user sets the cover art filter to "missing cover"
+- **THEN** the UI SHALL re-fetch `GET /api/v1/library` with `has_cover_art=false` and re-render the table accordingly
+
+#### Scenario: Ambiguous rows are visually distinguished
+- **WHEN** a row's status is `ambiguous`
+- **THEN** the UI SHALL show that status with its own distinct label/indicator, separate from `identified` and `not_found`
+
+#### Scenario: Resolving an ambiguous file from the details view
+- **WHEN** a user opens the details view for a row with status `ambiguous`
+- **THEN** the UI SHALL fetch and display that file's stored candidates and SHALL let the user choose one, calling the resolve endpoint and reflecting the row as `identified` with the chosen candidate's metadata once resolution succeeds
+
+#### Scenario: Resolve action is not available for non-ambiguous files
+- **WHEN** a row's status is not `ambiguous`
+- **THEN** the UI SHALL NOT offer a candidate-resolve action for that row
+
+#### Scenario: Browsing alternate covers from the details view
+- **WHEN** a user opens the details view for an `identified` row and triggers "browse other covers"
+- **THEN** the UI SHALL fetch and display cover-art candidates across that file's release-group's sibling editions, and SHALL let the user choose one, calling the choose endpoint and reflecting the row's cover art with the chosen image once the choice succeeds
+
+#### Scenario: Cover-browsing action is not available for unidentified files
+- **WHEN** a row's status is not `identified`
+- **THEN** the UI SHALL NOT offer a cover-browsing action for that row
+
+#### Scenario: Details view shows the raw tag snapshot for an unidentified file
+- **WHEN** a user opens the details view for a file with status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
+- **THEN** the UI SHALL display the raw title/artist/album/album-artist fields, labeled as embedded-in-file data rather than resolved metadata
+
+#### Scenario: Manual search is available for any row
+- **WHEN** a user opens the details view for a tracked file, regardless of its current status
+- **THEN** the UI SHALL offer a manual search control accepting free-text (or artist/title/album) input
+
+#### Scenario: Manual search results use the existing candidate picker
+- **WHEN** a manual search returns one or more candidates
+- **THEN** the UI SHALL render them using the same candidate-list/"Use this" component already used for ambiguous AcoustID results, and choosing one SHALL call the existing resolve endpoint
+
+#### Scenario: Manual search on an already-identified file warns before discarding its resolved metadata
+- **WHEN** a user triggers a manual search for a file whose status is currently `identified`
+- **THEN** the UI SHALL prompt for confirmation before submitting the search, since submitting it discards the file's current resolved metadata and stored candidates immediately
+
+#### Scenario: Manual search with no results leaves the file's row unchanged
+- **WHEN** a manual search returns zero candidates
+- **THEN** the UI SHALL indicate no matches were found and SHALL NOT alter the displayed row's status or metadata
+
 ### Requirement: Asynchronous refresh action
-The system SHALL expose a `POST /api/v1/library/scan` endpoint that starts the disk walk, fingerprinting, and tracking-store update (per the `file-tracking-store` capability) in the background and returns immediately, rather than blocking for the duration of the refresh.
+The system SHALL expose a `POST /api/v1/library/scan` endpoint that starts the disk walk and tracking-store update (per the `file-tracking-store` capability) in the background and returns immediately, rather than blocking for the duration of the refresh. A refresh SHALL NOT fingerprint any file — fingerprinting happens lazily during identification (see the `file-tracking-store` capability's "Fingerprint computed lazily during identification" requirement).
 
 #### Scenario: Refresh accepted and runs in the background
 - **WHEN** a client issues `POST /api/v1/library/scan` while no refresh is running
-- **THEN** the response SHALL be `202 Accepted` and the walk/fingerprint/update SHALL proceed asynchronously, without the HTTP request blocking until it finishes
+- **THEN** the response SHALL be `202 Accepted` and the walk/duration-read/update SHALL proceed asynchronously, without the HTTP request blocking until it finishes
 
-#### Scenario: Per-file fingerprint failure does not abort the refresh
-- **WHEN** one file in `/music` fails fingerprinting during a refresh (e.g. a corrupt audio file)
+#### Scenario: Per-file duration-read failure does not abort the refresh
+- **WHEN** one file in `/music` fails to have its duration read during a refresh (e.g. a corrupt audio file)
 - **THEN** that file SHALL be reported with an error indicator in its tracked record and the refresh SHALL continue processing the remaining files
 
 ### Requirement: Concurrent refresh prevention
@@ -193,14 +269,14 @@ The system SHALL expose a way for clients to determine whether a refresh is curr
 
 #### Scenario: Progress reported while running
 - **WHEN** a client queries refresh status while a refresh is in progress
-- **THEN** the response SHALL indicate that a refresh is running and SHALL include how many of the files needing fingerprinting have been processed so far
+- **THEN** the response SHALL indicate that a refresh is running and SHALL include how many of the files needing a duration read have been processed so far
 
 #### Scenario: Idle status when no refresh is running
 - **WHEN** a client queries refresh status while no refresh is in progress
 - **THEN** the response SHALL indicate that no refresh is currently running
 
 ### Requirement: On-demand identification action
-The system SHALL expose a `POST /api/v1/library/identify` endpoint accepting either a list of one or more file paths, or a filter (in the same shape accepted by `GET /api/v1/library`'s `status`/`tagged`/`relocated`/`q` query parameters), which starts a background job resolving each matching path's canonical metadata via AcoustID and MusicBrainz (per the `acoustid-lookup` and `musicbrainz-metadata` capabilities) and returns immediately rather than blocking for the duration of the job. When a filter is given, the system SHALL resolve it to the current set of matching paths at the moment the job starts, not at some earlier time the filter's matching count may have been displayed.
+The system SHALL expose a `POST /api/v1/library/identify` endpoint accepting either a list of one or more file paths, or a filter (in the same shape accepted by `GET /api/v1/library`'s `status`/`tagged`/`relocated`/`has_lyrics`/`q` query parameters), which starts a background job resolving each matching path's canonical metadata via AcoustID and MusicBrainz (per the `acoustid-lookup` and `musicbrainz-metadata` capabilities) and returns immediately rather than blocking for the duration of the job. When a filter is given, the system SHALL resolve it to the current set of matching paths at the moment the job starts, not at some earlier time the filter's matching count may have been displayed. A path with no fingerprint already stored SHALL have one computed as part of this job, per the `file-tracking-store` capability's "Fingerprint computed lazily during identification" requirement, rather than being skipped. A path whose accepted AcoustID match ties multiple distinct recordings SHALL be recorded `ambiguous` with its candidates stored, per the `file-tracking-store` capability's "Ambiguous identification is recorded with candidate metadata" requirement, rather than one recording being auto-picked.
 
 #### Scenario: Identify job accepted and runs in the background
 - **WHEN** a client issues `POST /api/v1/library/identify` with one or more paths while no identify job is running
@@ -218,6 +294,14 @@ The system SHALL expose a `POST /api/v1/library/identify` endpoint accepting eit
 - **WHEN** a scan refresh is currently running
 - **THEN** an identify job SHALL still be accepted and run concurrently, since the two do not share a concurrency guard
 
+#### Scenario: A path with no stored fingerprint is processed, not skipped
+- **WHEN** an identify job reaches a path with no fingerprint stored yet
+- **THEN** the system SHALL compute that fingerprint as part of processing that path, rather than skipping it
+
+#### Scenario: A path with tied recordings is recorded ambiguous, not auto-picked
+- **WHEN** an identify job reaches a path whose accepted AcoustID match ties multiple recordings resolving to distinct identities
+- **THEN** the system SHALL record that path `ambiguous` with its candidates stored, and continue processing the rest of the job
+
 ### Requirement: Identification progress is observable
 The system SHALL expose a `GET /api/v1/library/identify/status` endpoint reporting whether an identify job is currently running and its progress.
 
@@ -228,6 +312,51 @@ The system SHALL expose a `GET /api/v1/library/identify/status` endpoint reporti
 #### Scenario: Idle status when no identify job is running
 - **WHEN** a client queries identify status while no identify job is in progress
 - **THEN** the response SHALL indicate that no identify job is currently running
+
+### Requirement: Candidate retrieval via API
+The system SHALL expose a `GET /api/v1/library/candidates` endpoint that, given a tracked file's path, returns its stored candidate list (each candidate's resolved artist, album, title, track number, and other resolved metadata) as JSON, separately from the main list endpoint.
+
+#### Scenario: Candidates available
+- **WHEN** a client requests candidates for a file with status `ambiguous`
+- **THEN** the response SHALL be `200 OK` with a JSON body containing that file's stored candidate list
+
+#### Scenario: No candidates stored
+- **WHEN** a client requests candidates for a tracked file with no stored candidates (never ambiguous, or already resolved)
+- **THEN** the response SHALL be `200 OK` with an empty candidate list, distinct from the `404` given for a path that isn't tracked at all
+
+#### Scenario: Unknown path
+- **WHEN** a client requests candidates for a path that is not tracked
+- **THEN** the response SHALL be `404 Not Found`
+
+### Requirement: On-demand candidate resolution action
+The system SHALL expose a `POST /api/v1/library/identify/resolve` endpoint accepting a tracked file's path and one of its stored candidates' recording ID, which records that candidate as the file's resolved identification (per the `file-tracking-store` capability's "A stored candidate can be chosen to resolve an ambiguous file" requirement) and responds synchronously, since resolving a stored candidate requires no external network call.
+
+#### Scenario: Resolving a valid candidate succeeds
+- **WHEN** a client issues `POST /api/v1/library/identify/resolve` with a path and a recording ID matching one of that file's stored candidates
+- **THEN** the response SHALL be `200 OK`, the file's status SHALL become `identified` with that candidate's metadata, and its other stored candidates SHALL be discarded
+
+#### Scenario: Resolving an unrecognized candidate is rejected
+- **WHEN** a client issues `POST /api/v1/library/identify/resolve` with a path and a recording ID that does not match any of that file's stored candidates
+- **THEN** the response SHALL be `404 Not Found` and the file's status and stored candidates SHALL remain unchanged
+
+### Requirement: On-demand manual search action
+The system SHALL expose a `POST /api/v1/library/identify/search` endpoint accepting a tracked file's path and a free-text query, which searches MusicBrainz directly (per the `musicbrainz-metadata` capability's free-text recording search, independent of any audio fingerprint) and records the results as that file's candidates (per the `file-tracking-store` capability), responding synchronously with the resulting candidate list.
+
+#### Scenario: Search with results
+- **WHEN** a client issues `POST /api/v1/library/identify/search` with a path and a query that matches one or more MusicBrainz recordings
+- **THEN** the response SHALL be `200 OK` with the resulting candidate list, and the file's status SHALL become `ambiguous`
+
+#### Scenario: Search with no results
+- **WHEN** a client issues `POST /api/v1/library/identify/search` with a path and a query that matches no MusicBrainz recordings
+- **THEN** the response SHALL be `200 OK` with an empty candidate list, and the file's prior status and metadata SHALL remain unchanged
+
+#### Scenario: Search for an untracked path
+- **WHEN** a client issues `POST /api/v1/library/identify/search` with a path that is not tracked
+- **THEN** the response SHALL be `404 Not Found`
+
+#### Scenario: Search request failure
+- **WHEN** the underlying MusicBrainz search request fails
+- **THEN** the response SHALL indicate a server error distinguishable from "no matches found", and the file's prior status and metadata SHALL remain unchanged
 
 ### Requirement: Per-file details view
 The system SHALL allow a user to open a details view for a single tracked file, showing its complete resolved record — path, format, duration, status, any fingerprint error, (once identified) artist, album artist, title, track number, release year, disc number, total discs, total tracks, and MusicBrainz recording/release/release-group/artist IDs, and (once enriched) its cover art and lyrics, and (once tagged) the file's actual embedded tags read live from disk, shown alongside the resolved metadata for visual comparison. Opening this view SHALL NOT require any request beyond the already-fetched `GET /api/v1/library` data, except for the fingerprint, cover art image, lyrics text, and embedded tags themselves, each fetched on demand.
@@ -304,6 +433,32 @@ The system SHALL expose a `GET /api/v1/library/cover` endpoint that, given a tra
 #### Scenario: No cover art stored
 - **WHEN** a client requests cover art for a file with no stored cover art path
 - **THEN** the response SHALL be `404 Not Found`
+
+### Requirement: Cover-art candidate retrieval via API
+The system SHALL expose a `GET /api/v1/library/cover/candidates` endpoint that, given an identified tracked file's path, returns front-cover candidates (release ID, release title, thumbnail URL, and image URL) across that file's release-group's sibling editions (per the `cover-art-lookup` and `musicbrainz-metadata` capabilities), separately from the main list endpoint and from the single automatically-resolved cover.
+
+#### Scenario: Candidates available
+- **WHEN** a client requests cover candidates for an identified file whose release-group has at least one sibling edition with a front cover uploaded
+- **THEN** the response SHALL be `200 OK` with a JSON body containing those candidates
+
+#### Scenario: No candidates found
+- **WHEN** a client requests cover candidates for an identified file whose release-group has no sibling edition with a front cover uploaded
+- **THEN** the response SHALL be `200 OK` with an empty candidate list
+
+#### Scenario: Unknown or unidentified path
+- **WHEN** a client requests cover candidates for a path that is not tracked, or is tracked but not yet `identified`
+- **THEN** the response SHALL be `404 Not Found`
+
+### Requirement: On-demand cover-art choice action
+The system SHALL expose a `POST /api/v1/library/cover/choose` endpoint accepting a tracked file's path, a candidate's release ID, and its image URL, which downloads that image and records it as the file's cover art (per the `file-tracking-store` capability's existing cover-art recording, identically to automatic enrichment) and responds synchronously.
+
+#### Scenario: Choosing a candidate succeeds
+- **WHEN** a client issues `POST /api/v1/library/cover/choose` with a path and a release ID/image URL previously returned by the candidates endpoint
+- **THEN** the response SHALL be `200 OK` and the file's cover art SHALL become the chosen image
+
+#### Scenario: Choosing an image outside Cover Art Archive's host is rejected
+- **WHEN** a client issues `POST /api/v1/library/cover/choose` with an image URL whose host is not Cover Art Archive's own domain
+- **THEN** the system SHALL refuse the request with an error and SHALL NOT fetch it
 
 ### Requirement: Lyrics retrieval via API
 The system SHALL expose a `GET /api/v1/library/lyrics` endpoint that, given a tracked file's path, returns that file's stored plain and synced lyrics as JSON.
@@ -403,8 +558,12 @@ The system SHALL expose a `GET /api/v1/library/tags` endpoint that, given a trac
 The system SHALL expose a `GET /api/v1/library/fingerprint` endpoint that, given a tracked file's path, returns that file's stored Chromaprint fingerprint as JSON, separately from the main list endpoint.
 
 #### Scenario: Fingerprint available
-- **WHEN** a client requests the fingerprint for a tracked file
+- **WHEN** a client requests the fingerprint for a tracked file that has one stored
 - **THEN** the response SHALL be `200 OK` with a JSON body containing that file's fingerprint string
+
+#### Scenario: Fingerprint not yet computed
+- **WHEN** a client requests the fingerprint for a tracked file that has not yet been fingerprinted (no identify attempt has run for it)
+- **THEN** the response SHALL be `200 OK` with an empty fingerprint string, distinct from the `404` given for a path that isn't tracked at all
 
 #### Scenario: Unknown path
 - **WHEN** a client requests the fingerprint for a path that is not tracked

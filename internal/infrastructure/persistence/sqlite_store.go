@@ -35,6 +35,31 @@ CREATE TABLE IF NOT EXISTS files (
 );
 `
 
+// candidatesSchema holds every distinct recording resolved from a top
+// AcoustID result that ties multiple recordings to the same audio, for a
+// file currently recorded StatusAmbiguous. Rows are replaced wholesale
+// (never individually updated) each time a file is recorded ambiguous, and
+// deleted wholesale once it's resolved or re-identified.
+const candidatesSchema = `
+CREATE TABLE IF NOT EXISTS identification_candidates (
+	path               TEXT NOT NULL,
+	recording_mbid     TEXT NOT NULL,
+	artist             TEXT NOT NULL DEFAULT '',
+	album              TEXT NOT NULL DEFAULT '',
+	title              TEXT NOT NULL DEFAULT '',
+	track_number       INTEGER NOT NULL DEFAULT 0,
+	album_artist       TEXT NOT NULL DEFAULT '',
+	year               INTEGER NOT NULL DEFAULT 0,
+	disc_number        INTEGER NOT NULL DEFAULT 0,
+	total_discs        INTEGER NOT NULL DEFAULT 0,
+	total_tracks       INTEGER NOT NULL DEFAULT 0,
+	release_mbid       TEXT NOT NULL DEFAULT '',
+	release_group_mbid TEXT NOT NULL DEFAULT '',
+	artist_mbid        TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (path, recording_mbid)
+);
+`
+
 // SQLiteStore is a TrackingStore backed by an embedded SQLite database
 // (pure-Go driver, no CGO).
 type SQLiteStore struct {
@@ -64,6 +89,10 @@ func NewSQLiteStore(ctx context.Context, dbPath string) (*SQLiteStore, error) {
 	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("creating schema: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, candidatesSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("creating candidates schema: %w", err)
 	}
 	if err := migrateColumns(ctx, db); err != nil {
 		db.Close()
@@ -106,6 +135,10 @@ var columnMigrations = []struct {
 	{"tag_error", "TEXT NOT NULL DEFAULT ''"},
 	{"relocated", "INTEGER NOT NULL DEFAULT 0"},
 	{"relocate_error", "TEXT NOT NULL DEFAULT ''"},
+	{"raw_title", "TEXT NOT NULL DEFAULT ''"},
+	{"raw_artist", "TEXT NOT NULL DEFAULT ''"},
+	{"raw_album", "TEXT NOT NULL DEFAULT ''"},
+	{"raw_album_artist", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func migrateColumns(ctx context.Context, db *sql.DB) error {
@@ -229,6 +262,10 @@ func migratePrimaryKey(ctx context.Context, db *sql.DB) error {
 			tag_error          TEXT NOT NULL DEFAULT '',
 			relocated          INTEGER NOT NULL DEFAULT 0,
 			relocate_error     TEXT NOT NULL DEFAULT '',
+			raw_title          TEXT NOT NULL DEFAULT '',
+			raw_artist         TEXT NOT NULL DEFAULT '',
+			raw_album          TEXT NOT NULL DEFAULT '',
+			raw_album_artist   TEXT NOT NULL DEFAULT '',
 			updated_at         INTEGER NOT NULL
 		)
 	`); err != nil {
@@ -240,13 +277,15 @@ func migratePrimaryKey(ctx context.Context, db *sql.DB) error {
 			path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 			artist, album, title, track_number, recording_mbid,
 			album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error, updated_at
+			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+			raw_title, raw_artist, raw_album, raw_album_artist, updated_at
 		)
 		SELECT
 			path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 			artist, album, title, track_number, recording_mbid,
 			album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error, updated_at
+			cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+			raw_title, raw_artist, raw_album, raw_album_artist, updated_at
 		FROM files
 	`); err != nil {
 		return fmt.Errorf("copying rows into rebuilt files table: %w", err)
@@ -274,7 +313,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+		       raw_title, raw_artist, raw_album, raw_album_artist
 		FROM files
 	`)
 	if err != nil {
@@ -290,7 +330,8 @@ func (s *SQLiteStore) LoadAll(ctx context.Context) (map[string]domain.FileRecord
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError); err != nil {
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError,
+			&rec.RawTitle, &rec.RawArtist, &rec.RawAlbum, &rec.RawAlbumArtist); err != nil {
 			return nil, fmt.Errorf("scanning tracked file row: %w", err)
 		}
 		rec.Format = domain.Format(format)
@@ -314,7 +355,8 @@ func (s *SQLiteStore) Get(ctx context.Context, path string) (domain.FileRecord, 
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+		       raw_title, raw_artist, raw_album, raw_album_artist
 		FROM files
 		WHERE path = ?
 	`, path)
@@ -325,7 +367,8 @@ func (s *SQLiteStore) Get(ctx context.Context, path string) (domain.FileRecord, 
 	err := row.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 		&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 		&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-		&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError)
+		&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError,
+		&rec.RawTitle, &rec.RawArtist, &rec.RawAlbum, &rec.RawAlbumArtist)
 	if err == sql.ErrNoRows {
 		return domain.FileRecord{}, false, nil
 	}
@@ -354,10 +397,13 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 		// and the extended fields below) is always reset to blank here —
 		// every Upserts entry is a brand new or content-changed file, so
 		// any prior identification is stale and must not linger against
-		// different content.
+		// different content. Raw tag fields, by contrast, are written from
+		// this pass's freshly-read values (not reset to blank), since
+		// they're independent of resolved metadata and reflect the file's
+		// current content.
 		upsertStmt, err := tx.PrepareContext(ctx, `
-			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid, cover_art_path, lyrics, synced_lyrics, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', '', 0, 0, 0, 0, '', '', '', '', '', '', ?)
+			INSERT INTO files (path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error, artist, album, title, track_number, recording_mbid, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid, cover_art_path, lyrics, synced_lyrics, raw_title, raw_artist, raw_album, raw_album_artist, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, '', '', '', 0, '', '', 0, 0, 0, 0, '', '', '', '', '', '', ?, ?, ?, ?, ?)
 			ON CONFLICT(path) DO UPDATE SET
 				format = excluded.format,
 				fingerprint = excluded.fingerprint,
@@ -383,6 +429,10 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 				cover_art_path = '',
 				lyrics = '',
 				synced_lyrics = '',
+				raw_title = excluded.raw_title,
+				raw_artist = excluded.raw_artist,
+				raw_album = excluded.raw_album,
+				raw_album_artist = excluded.raw_album_artist,
 				updated_at = excluded.updated_at
 		`)
 		if err != nil {
@@ -391,7 +441,7 @@ func (s *SQLiteStore) BulkApply(ctx context.Context, apply usecases.BulkApply) e
 		defer upsertStmt.Close()
 
 		for _, rec := range apply.Upserts {
-			if _, err := upsertStmt.ExecContext(ctx, rec.Path, string(rec.Format), rec.Fingerprint, rec.DurationSeconds, rec.Size, rec.ModTime, string(rec.Status), rec.FingerprintError, now); err != nil {
+			if _, err := upsertStmt.ExecContext(ctx, rec.Path, string(rec.Format), rec.Fingerprint, rec.DurationSeconds, rec.Size, rec.ModTime, string(rec.Status), rec.FingerprintError, rec.RawTitle, rec.RawArtist, rec.RawAlbum, rec.RawAlbumArtist, now); err != nil {
 				return fmt.Errorf("upserting %s: %w", rec.Path, err)
 			}
 		}
@@ -479,6 +529,9 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 		if err != nil {
 			return fmt.Errorf("recording identification for %s: %w", path, err)
 		}
+		if err := s.clearCandidates(ctx, path); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -486,7 +539,181 @@ func (s *SQLiteStore) RecordIdentification(ctx context.Context, path string, res
 	if err != nil {
 		return fmt.Errorf("recording identification outcome for %s: %w", path, err)
 	}
+	if err := s.clearCandidates(ctx, path); err != nil {
+		return err
+	}
 	return nil
+}
+
+// clearCandidates deletes any stored candidates for path — called whenever
+// a file is identified again (whether it resolves to identified, not_found,
+// or ambiguous), so a stale candidate list from a prior ambiguous outcome
+// never lingers past a fresh identification attempt.
+func (s *SQLiteStore) clearCandidates(ctx context.Context, path string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM identification_candidates WHERE path = ?`, path); err != nil {
+		return fmt.Errorf("clearing stale candidates for %s: %w", path, err)
+	}
+	return nil
+}
+
+// RecordAmbiguous replaces path's stored candidates with candidates and
+// records it as ambiguous, clearing resolved metadata and invalidating
+// enrichment/tagged/relocated outcomes in the same transaction, mirroring
+// RecordIdentification's not-found branch.
+func (s *SQLiteStore) RecordAmbiguous(ctx context.Context, path string, candidates []usecases.RecordingMetadata) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning ambiguous-recording transaction for %s: %w", path, err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM identification_candidates WHERE path = ?`, path); err != nil {
+		return fmt.Errorf("clearing prior candidates for %s: %w", path, err)
+	}
+
+	insertStmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO identification_candidates (path, recording_mbid, artist, album, title, track_number, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing candidate insert for %s: %w", path, err)
+	}
+	defer insertStmt.Close()
+
+	for _, c := range candidates {
+		if _, err := insertStmt.ExecContext(ctx, path, c.RecordingID, c.Artist, c.Album, c.Title, c.TrackNumber, c.AlbumArtist, c.Year, c.DiscNumber, c.TotalDiscs, c.TotalTracks, c.ReleaseMBID, c.ReleaseGroupMBID, c.ArtistMBID); err != nil {
+			return fmt.Errorf("inserting candidate %s for %s: %w", c.RecordingID, path, err)
+		}
+	}
+
+	now := time.Now().Unix()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE files SET
+			status = ?,
+			artist = '',
+			album = '',
+			title = '',
+			track_number = 0,
+			recording_mbid = '',
+			album_artist = '',
+			year = 0,
+			disc_number = 0,
+			total_discs = 0,
+			total_tracks = 0,
+			release_mbid = '',
+			release_group_mbid = '',
+			artist_mbid = '',
+			cover_art_path = '',
+			lyrics = '',
+			synced_lyrics = '',
+			tagged = 0,
+			tag_error = '',
+			relocated = 0,
+			relocate_error = '',
+			updated_at = ?
+		WHERE path = ?
+	`, string(domain.StatusAmbiguous), now, path); err != nil {
+		return fmt.Errorf("recording ambiguous outcome for %s: %w", path, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing ambiguous recording for %s: %w", path, err)
+	}
+	return nil
+}
+
+// GetCandidates returns path's stored candidate list via a single indexed
+// lookup, for the details view's candidate picker.
+func (s *SQLiteStore) GetCandidates(ctx context.Context, path string) ([]usecases.RecordingMetadata, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT recording_mbid, artist, album, title, track_number, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid
+		FROM identification_candidates
+		WHERE path = ?
+	`, path)
+	if err != nil {
+		return nil, fmt.Errorf("querying candidates for %s: %w", path, err)
+	}
+	defer rows.Close()
+
+	var candidates []usecases.RecordingMetadata
+	for rows.Next() {
+		var c usecases.RecordingMetadata
+		if err := rows.Scan(&c.RecordingID, &c.Artist, &c.Album, &c.Title, &c.TrackNumber, &c.AlbumArtist, &c.Year, &c.DiscNumber, &c.TotalDiscs, &c.TotalTracks, &c.ReleaseMBID, &c.ReleaseGroupMBID, &c.ArtistMBID); err != nil {
+			return nil, fmt.Errorf("scanning candidate row for %s: %w", path, err)
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading candidate rows for %s: %w", path, err)
+	}
+	return candidates, nil
+}
+
+// ResolveAmbiguous records the stored candidate matching recordingMBID as
+// path's resolved identification and discards its other stored candidates,
+// in one transaction. found is false (with a nil error) when recordingMBID
+// doesn't match any of path's stored candidates.
+func (s *SQLiteStore) ResolveAmbiguous(ctx context.Context, path, recordingMBID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("beginning resolve transaction for %s: %w", path, err)
+	}
+	defer tx.Rollback()
+
+	row := tx.QueryRowContext(ctx, `
+		SELECT recording_mbid, artist, album, title, track_number, album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid
+		FROM identification_candidates
+		WHERE path = ? AND recording_mbid = ?
+	`, path, recordingMBID)
+
+	var c usecases.RecordingMetadata
+	if err := row.Scan(&c.RecordingID, &c.Artist, &c.Album, &c.Title, &c.TrackNumber, &c.AlbumArtist, &c.Year, &c.DiscNumber, &c.TotalDiscs, &c.TotalTracks, &c.ReleaseMBID, &c.ReleaseGroupMBID, &c.ArtistMBID); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("querying candidate %s for %s: %w", recordingMBID, path, err)
+	}
+
+	now := time.Now().Unix()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE files SET
+			status = ?,
+			artist = ?,
+			album = ?,
+			title = ?,
+			track_number = ?,
+			recording_mbid = ?,
+			album_artist = ?,
+			year = ?,
+			disc_number = ?,
+			total_discs = ?,
+			total_tracks = ?,
+			release_mbid = ?,
+			release_group_mbid = ?,
+			artist_mbid = ?,
+			cover_art_path = '',
+			lyrics = '',
+			synced_lyrics = '',
+			tagged = 0,
+			tag_error = '',
+			relocated = 0,
+			relocate_error = '',
+			updated_at = ?
+		WHERE path = ?
+	`, string(domain.StatusIdentified), c.Artist, c.Album, c.Title, c.TrackNumber, c.RecordingID,
+		c.AlbumArtist, c.Year, c.DiscNumber, c.TotalDiscs, c.TotalTracks,
+		c.ReleaseMBID, c.ReleaseGroupMBID, c.ArtistMBID, now, path); err != nil {
+		return false, fmt.Errorf("recording resolved identification for %s: %w", path, err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM identification_candidates WHERE path = ?`, path); err != nil {
+		return false, fmt.Errorf("clearing candidates for %s: %w", path, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("committing resolve for %s: %w", path, err)
+	}
+	return true, nil
 }
 
 // RecordCoverArt updates one file's stored cover art path, without
@@ -550,6 +777,19 @@ func (s *SQLiteStore) RecordTagged(ctx context.Context, path string, tagged bool
 	_, err := s.db.ExecContext(ctx, `UPDATE files SET tagged = ?, tag_error = ?, updated_at = ? WHERE path = ?`, taggedInt, tagErr, now, path)
 	if err != nil {
 		return fmt.Errorf("recording tagged outcome for %s: %w", path, err)
+	}
+	return nil
+}
+
+// RecordFingerprint updates one file's fingerprint, duration, and
+// fingerprint error, without altering its status, resolved metadata, or any
+// other field. Called once by IdentifyFile.Identify after it computes (or
+// fails to compute) a fingerprint on demand.
+func (s *SQLiteStore) RecordFingerprint(ctx context.Context, path string, fingerprint string, durationSeconds float64, fingerprintErr string) error {
+	now := time.Now().Unix()
+	_, err := s.db.ExecContext(ctx, `UPDATE files SET fingerprint = ?, duration_seconds = ?, fingerprint_error = ?, updated_at = ? WHERE path = ?`, fingerprint, durationSeconds, fingerprintErr, now, path)
+	if err != nil {
+		return fmt.Errorf("recording fingerprint for %s: %w", path, err)
 	}
 	return nil
 }
@@ -625,9 +865,23 @@ func buildLibraryWhere(filter usecases.LibraryFilter) (string, []any) {
 		clauses = append(clauses, "relocated = ?")
 		args = append(args, boolToInt(*filter.Relocated))
 	}
+	if filter.HasLyrics != nil {
+		if *filter.HasLyrics {
+			clauses = append(clauses, "(lyrics != '' OR synced_lyrics != '')")
+		} else {
+			clauses = append(clauses, "(lyrics = '' AND synced_lyrics = '')")
+		}
+	}
+	if filter.HasCoverArt != nil {
+		if *filter.HasCoverArt {
+			clauses = append(clauses, "cover_art_path != ''")
+		} else {
+			clauses = append(clauses, "cover_art_path = ''")
+		}
+	}
 	if filter.Search != "" {
-		clauses = append(clauses, "(path LIKE '%'||?||'%' COLLATE NOCASE OR artist LIKE '%'||?||'%' COLLATE NOCASE OR album LIKE '%'||?||'%' COLLATE NOCASE OR title LIKE '%'||?||'%' COLLATE NOCASE)")
-		args = append(args, filter.Search, filter.Search, filter.Search, filter.Search)
+		clauses = append(clauses, "(path LIKE '%'||?||'%' COLLATE NOCASE OR artist LIKE '%'||?||'%' COLLATE NOCASE OR album LIKE '%'||?||'%' COLLATE NOCASE OR title LIKE '%'||?||'%' COLLATE NOCASE OR raw_title LIKE '%'||?||'%' COLLATE NOCASE OR raw_artist LIKE '%'||?||'%' COLLATE NOCASE OR raw_album LIKE '%'||?||'%' COLLATE NOCASE)")
+		args = append(args, filter.Search, filter.Search, filter.Search, filter.Search, filter.Search, filter.Search, filter.Search)
 	}
 
 	if len(clauses) == 0 {
@@ -674,7 +928,8 @@ func (s *SQLiteStore) QueryPage(ctx context.Context, filter usecases.LibraryFilt
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
 		       artist, album, title, track_number, recording_mbid,
 		       album_artist, year, disc_number, total_discs, total_tracks, release_mbid, release_group_mbid, artist_mbid,
-		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error
+		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
+		       raw_title, raw_artist, raw_album, raw_album_artist
 		FROM files`
 	if where != "" {
 		query += " WHERE " + where
@@ -696,7 +951,8 @@ func (s *SQLiteStore) QueryPage(ctx context.Context, filter usecases.LibraryFilt
 		if err := rows.Scan(&rec.Path, &format, &rec.Fingerprint, &rec.DurationSeconds, &rec.Size, &rec.ModTime, &status, &missing, &rec.FingerprintError,
 			&rec.Artist, &rec.Album, &rec.Title, &rec.TrackNumber, &rec.RecordingMBID,
 			&rec.AlbumArtist, &rec.Year, &rec.DiscNumber, &rec.TotalDiscs, &rec.TotalTracks, &rec.ReleaseMBID, &rec.ReleaseGroupMBID, &rec.ArtistMBID,
-			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError); err != nil {
+			&rec.CoverArtPath, &rec.Lyrics, &rec.SyncedLyrics, &tagged, &rec.TagError, &relocated, &rec.RelocateError,
+			&rec.RawTitle, &rec.RawArtist, &rec.RawAlbum, &rec.RawAlbumArtist); err != nil {
 			return nil, 0, fmt.Errorf("scanning library page row: %w", err)
 		}
 		rec.Format = domain.Format(format)

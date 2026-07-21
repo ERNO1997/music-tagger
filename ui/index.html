@@ -52,6 +52,7 @@
         <option value="new">New</option>
         <option value="identified">Identified</option>
         <option value="not_found">Not Found</option>
+        <option value="ambiguous">Ambiguous</option>
         <option value="missing">Missing</option>
       </select>
       <select id="filter-tagged" class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5">
@@ -63,6 +64,16 @@
         <option value="">Relocated: any</option>
         <option value="true">Relocated: yes</option>
         <option value="false">Relocated: no</option>
+      </select>
+      <select id="filter-has-lyrics" class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5">
+        <option value="">Lyrics: any</option>
+        <option value="true">Lyrics: yes</option>
+        <option value="false">Lyrics: no</option>
+      </select>
+      <select id="filter-has-cover-art" class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5">
+        <option value="">Cover: any</option>
+        <option value="true">Cover: yes</option>
+        <option value="false">Cover: no</option>
       </select>
       <input
         id="filter-search"
@@ -129,7 +140,18 @@
         <button id="details-close" class="text-neutral-400 hover:text-neutral-100 text-xl leading-none">&times;</button>
       </div>
       <img id="details-cover" class="hidden w-full max-h-64 object-contain bg-black" />
+      <div id="details-browse-covers-toggle-wrap" class="hidden px-5 pt-3">
+        <button id="details-browse-covers-toggle" class="text-xs text-blue-400 hover:underline">Browse other covers…</button>
+      </div>
+      <div id="details-cover-candidates-section" class="hidden px-5 py-4 border-b border-neutral-800">
+        <h3 class="text-neutral-400 text-xs uppercase mb-2">Choose a cover from this release group</h3>
+        <div id="details-cover-candidates" class="grid grid-cols-4 gap-2"></div>
+      </div>
       <dl id="details-fields" class="px-5 py-4 space-y-2 text-sm"></dl>
+      <div id="details-raw-tags-section" class="hidden px-5 py-4 border-t border-neutral-800">
+        <h3 class="text-neutral-400 text-xs uppercase mb-2">From the file itself (not yet identified)</h3>
+        <dl id="details-raw-tags" class="space-y-2 text-sm"></dl>
+      </div>
       <div id="details-lyrics-section" class="hidden px-5 py-4 border-t border-neutral-800">
         <h3 class="text-neutral-400 text-xs uppercase mb-2">Lyrics</h3>
         <pre id="details-lyrics" class="whitespace-pre-wrap font-sans text-sm max-h-64 overflow-y-auto text-neutral-200"></pre>
@@ -138,9 +160,26 @@
         <h3 class="text-neutral-400 text-xs uppercase mb-2">Embedded Tags (read from the file itself)</h3>
         <dl id="details-embedded-tags" class="space-y-2 text-sm"></dl>
       </div>
+      <div id="details-candidates-section" class="hidden px-5 py-4 border-t border-neutral-800">
+        <h3 id="details-candidates-heading" class="text-neutral-400 text-xs uppercase mb-2">Choose the correct recording</h3>
+        <div id="details-candidates" class="space-y-2 text-sm"></div>
+      </div>
+      <div class="px-5 py-4 border-t border-neutral-800">
+        <h3 class="text-neutral-400 text-xs uppercase mb-2">Search manually</h3>
+        <p class="text-neutral-500 text-xs mb-2">Searches MusicBrainz directly by text — no audio fingerprint needed. Fill in whichever fields you know.</p>
+        <div class="grid grid-cols-3 gap-2 mb-2">
+          <input id="manual-search-artist" type="text" placeholder="Artist" class="rounded-md bg-neutral-800 border border-neutral-700 text-sm px-2 py-1.5" />
+          <input id="manual-search-title" type="text" placeholder="Title" class="rounded-md bg-neutral-800 border border-neutral-700 text-sm px-2 py-1.5" />
+          <input id="manual-search-album" type="text" placeholder="Album" class="rounded-md bg-neutral-800 border border-neutral-700 text-sm px-2 py-1.5" />
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="manual-search-button" class="rounded-md bg-blue-600 text-white text-xs font-medium px-3 py-1.5 hover:bg-blue-500">Search</button>
+          <span id="manual-search-status" class="text-xs text-neutral-400"></span>
+        </div>
+      </div>
     </div>
   </div>
 
-  <script src="/js/app.js"></script>
+  <script type="module" src="/js/main.js"></script>
 </body>
 </html>
