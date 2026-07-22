@@ -8,75 +8,93 @@ import FilterBar from './components/FilterBar.vue';
 import SelectionBanner from './components/SelectionBanner.vue';
 import PlayerBar from './components/PlayerBar.vue';
 import DetailsView from './components/DetailsView.vue';
-import TableView from './components/views/TableView.vue';
-import GridView from './components/views/GridView.vue';
-import TreeView from './components/views/TreeView.vue';
-import ArtistAlbumView from './components/views/ArtistAlbumView.vue';
+import AllGroupingView from './components/views/AllGroupingView.vue';
+import FolderGroupingView from './components/views/FolderGroupingView.vue';
+import ArtistAlbumGroupingView from './components/views/ArtistAlbumGroupingView.vue';
 
-const treeViewRef = ref(null);
+const folderViewRef = ref(null);
 const artistAlbumViewRef = ref(null);
 
-const VIEWS = [
-  { key: 'table', label: 'Table' },
-  { key: 'grid', label: 'Grid' },
-  { key: 'tree', label: 'Folder Tree' },
+const GROUPINGS = [
+  { key: 'all', label: 'All' },
+  { key: 'folder', label: 'Folder' },
   { key: 'artist-album', label: 'Artist / Album' },
 ];
 
-// Refreshes whichever of the four views is presently active, keeping its
-// current page/drill-down position — used after a bulk-action job updates
-// the currently-visible listing (DetailsView's resolve/cover-choose, and
-// the job poll onUpdate callbacks below).
+const PRESENTATIONS = [
+  { key: 'table', label: 'Table', icon: '☰' },
+  { key: 'grid', label: 'Grid', icon: '⊞' },
+];
+
+// The presentation toggle only makes sense where the active grouping/level
+// currently has a file/track listing to present: always for All and
+// Folder; only at Artist-Album's `tracks` level (the artists/albums levels
+// stay card grids of groups regardless of the stored presentation).
+const presentationVisible = computed(() => {
+  if (store.grouping === 'artist-album') {
+    return artistAlbumViewRef.value?.level === 'tracks';
+  }
+  return true;
+});
+
+// Refreshes whichever grouping is presently active, keeping its current
+// page/drill-down position — used after a bulk-action job updates the
+// currently-visible listing (DetailsView's resolve/cover-choose, and the
+// job poll onUpdate callbacks below).
 async function refreshCurrentView() {
-  switch (store.currentView) {
-    case 'tree':
-      return treeViewRef.value?.reloadTree();
+  switch (store.grouping) {
+    case 'folder':
+      return folderViewRef.value?.reloadTree();
     case 'artist-album':
       return artistAlbumViewRef.value?.reloadArtistAlbum();
-    case 'grid':
-    case 'table':
+    case 'all':
     default:
       return loadLibrary();
   }
 }
 
-// Refreshes whichever view is active after a filter/search/sort/page-size
+// Refreshes whichever grouping is active after a filter/search/sort/page-size
 // change, resetting back to its first page — a narrower filter can leave a
 // previously-valid offset past the end of the new result set.
 function refreshCurrentViewAfterFilterChange() {
   store.pageState.offset = 0;
-  switch (store.currentView) {
-    case 'tree':
-      return treeViewRef.value?.resetTreePage();
+  switch (store.grouping) {
+    case 'folder':
+      return folderViewRef.value?.resetTreePage();
     case 'artist-album':
       // Artists/albums/tracks levels aren't paginated — re-showing the
       // current level already reflects the new filter.
       return artistAlbumViewRef.value?.reloadArtistAlbum();
-    case 'grid':
-    case 'table':
+    case 'all':
     default:
       return loadLibrary();
   }
 }
 
-async function selectView(viewKey) {
-  if (viewKey === store.currentView) {
+// Grouping and presentation are independent: switching one never resets or
+// affects the other, and switching presentation never triggers a re-fetch —
+// it's purely how the already-fetched entries are rendered.
+async function selectGrouping(groupingKey) {
+  if (groupingKey === store.grouping) {
     return;
   }
-  store.currentView = viewKey;
-  switch (viewKey) {
-    case 'tree':
-      await treeViewRef.value?.loadTree();
+  store.grouping = groupingKey;
+  switch (groupingKey) {
+    case 'folder':
+      await folderViewRef.value?.loadTree();
       break;
     case 'artist-album':
       await artistAlbumViewRef.value?.showArtists();
       break;
-    case 'grid':
-    case 'table':
+    case 'all':
     default:
       await loadLibrary();
       break;
   }
+}
+
+function selectPresentation(presentationKey) {
+  store.presentation = presentationKey;
 }
 
 const jobs = useJobs({ refreshCurrentView });
@@ -162,31 +180,41 @@ onMounted(async () => {
 
     <FilterBar @change="refreshCurrentViewAfterFilterChange" />
 
-    <div class="flex gap-1 mb-3" role="tablist">
-      <button
-        v-for="v in VIEWS"
-        :key="v.key"
-        class="rounded-md px-3 py-1.5 text-sm font-medium"
-        :class="store.currentView === v.key ? 'bg-neutral-100 text-neutral-900' : 'bg-neutral-900 text-neutral-300 border border-neutral-800'"
-        @click="selectView(v.key)"
-      >{{ v.label }}</button>
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+      <div class="flex gap-1" role="tablist" aria-label="Grouping">
+        <button
+          v-for="g in GROUPINGS"
+          :key="g.key"
+          class="rounded-md px-3 py-1.5 text-sm font-medium"
+          :class="store.grouping === g.key ? 'bg-neutral-100 text-neutral-900' : 'bg-neutral-900 text-neutral-300 border border-neutral-800'"
+          @click="selectGrouping(g.key)"
+        >{{ g.label }}</button>
+      </div>
+      <div v-if="presentationVisible" class="flex gap-1" role="tablist" aria-label="Presentation">
+        <button
+          v-for="p in PRESENTATIONS"
+          :key="p.key"
+          class="rounded-md px-3 py-1.5 text-sm font-medium"
+          :class="store.presentation === p.key ? 'bg-neutral-100 text-neutral-900' : 'bg-neutral-900 text-neutral-300 border border-neutral-800'"
+          :title="p.label"
+          :aria-label="p.label"
+          @click="selectPresentation(p.key)"
+        >{{ p.icon }}</button>
+      </div>
     </div>
 
     <SelectionBanner />
 
     <div :class="statusClass">{{ libraryStatus.text }}</div>
 
-    <div v-show="store.currentView === 'table'">
-      <TableView />
+    <div v-show="store.grouping === 'all'">
+      <AllGroupingView />
     </div>
-    <div v-show="store.currentView === 'grid'">
-      <GridView />
+    <div v-show="store.grouping === 'folder'">
+      <FolderGroupingView ref="folderViewRef" />
     </div>
-    <div v-show="store.currentView === 'tree'">
-      <TreeView ref="treeViewRef" />
-    </div>
-    <div v-show="store.currentView === 'artist-album'">
-      <ArtistAlbumView ref="artistAlbumViewRef" />
+    <div v-show="store.grouping === 'artist-album'">
+      <ArtistAlbumGroupingView ref="artistAlbumViewRef" />
     </div>
   </div>
 

@@ -1,11 +1,9 @@
 <script setup>
-import { ref, reactive } from 'vue';
+import { ref } from 'vue';
 import { store, buildFilterParams } from '../../store.js';
-import { formatDuration } from '../../format.js';
-import { statusLabel, statusClass, metadataText, hasRawMetadata, coverSrc } from '../../entryDisplay.js';
 import { fetchTree } from '../../api.js';
-import { playTrack } from '../../composables/usePlayer.js';
-import { openDetails } from '../../composables/useDetails.js';
+import EntryTable from '../EntryTable.vue';
+import EntryGrid from '../EntryGrid.vue';
 
 // rootPath is captured from the very first response (whatever prefix the
 // server resolved an omitted "path" to, i.e. the music root) — used only to
@@ -92,14 +90,6 @@ function onCrumbClick(crumb) {
   loadTree(crumb.path);
 }
 
-function onPlay(entry) {
-  playTrack(entry);
-}
-
-function onFileClick(entry) {
-  openDetails(entry.path);
-}
-
 function onPrevPage() {
   offset.value = Math.max(0, offset.value - store.pageState.limit);
   fetchAndRender();
@@ -154,47 +144,9 @@ defineExpose({ loadTree, reloadTree, resetTreePage });
       </button>
     </div>
 
-    <div class="overflow-x-auto rounded-lg border border-neutral-800">
-      <table class="w-full text-sm text-left">
-        <thead class="bg-neutral-900 text-neutral-400 uppercase text-xs">
-          <tr>
-            <th class="px-4 py-3">Cover</th>
-            <th class="px-4 py-3">Path</th>
-            <th class="px-4 py-3">Format</th>
-            <th class="px-4 py-3">Duration</th>
-            <th class="px-4 py-3">Status</th>
-            <th class="px-4 py-3">Artist / Album / Title / Track</th>
-            <th class="px-4 py-3">Play</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-neutral-800">
-          <tr
-            v-for="entry in files"
-            :key="entry.path"
-            class="cursor-pointer hover:bg-neutral-900"
-            @click="onFileClick(entry)"
-          >
-            <td class="px-4 py-3">
-              <img v-if="coverSrc(entry)" :src="coverSrc(entry)" class="w-10 h-10 rounded object-cover" alt="" />
-              <div v-else class="w-10 h-10 rounded bg-neutral-800"></div>
-            </td>
-            <td class="px-4 py-3 font-mono text-xs">{{ entry.path }}</td>
-            <td class="px-4 py-3 uppercase">{{ entry.format }}</td>
-            <td class="px-4 py-3">{{ formatDuration(entry.duration_seconds) }}</td>
-            <td class="px-4 py-3" :class="statusClass(entry)">{{ statusLabel(entry) }}</td>
-            <td class="px-4 py-3">
-              <span v-if="entry.status === 'identified'">{{ metadataText(entry) }}</span>
-              <span v-else-if="hasRawMetadata(entry)" class="italic text-neutral-500" title="From the file's own tags, not yet identified">{{ metadataText(entry) }}</span>
-              <span v-else>—</span>
-            </td>
-            <td class="px-4 py-3" @click.stop>
-              <span v-if="entry.status === 'missing'">—</span>
-              <button v-else class="play-button text-neutral-300 hover:text-white" title="Play" @click="onPlay(entry)">&#9654;</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <EntryTable v-if="store.presentation === 'table'" :entries="files" :sortable="false" @refresh="reloadTree" />
+    <EntryGrid v-else :entries="files" />
+
     <div class="flex items-center justify-between mt-3 text-sm text-neutral-400">
       <div>{{ paginationInfo() }}</div>
       <div class="flex items-center gap-2">

@@ -22,7 +22,8 @@ export const store = reactive({
   showSelectedOnly: false,
   total: 0,
   lastEntries: [],
-  currentView: 'table',
+  grouping: 'all',
+  presentation: 'table',
 });
 
 export function getSelectionCount() {

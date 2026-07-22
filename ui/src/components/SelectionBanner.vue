@@ -31,10 +31,10 @@ const showSelectAllMatching = computed(
 );
 
 // The toggle only makes sense in explicit mode (in filter mode, the current
-// filtered listing already is the selection) and only for the table/grid
-// views (tree/artist-album don't go through loadLibrary at all).
+// filtered listing already is the selection) and only for the All grouping
+// (Folder/Artist-Album don't go through loadLibrary at all).
 const showToggle = computed(
-  () => store.selectionMode !== 'filter' && (store.currentView === 'table' || store.currentView === 'grid'),
+  () => store.selectionMode !== 'filter' && store.grouping === 'all',
 );
 
 function selectAllMatching() {

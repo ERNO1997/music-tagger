@@ -1,14 +1,14 @@
 <script setup>
 import { ref } from 'vue';
 import { store, buildFilterParams } from '../../store.js';
-import { formatDuration } from '../../format.js';
-import { statusLabel, statusClass, metadataText, hasRawMetadata, coverSrc } from '../../entryDisplay.js';
 import { fetchArtists, fetchAlbums, fetchTracks } from '../../api.js';
-import { playTrack } from '../../composables/usePlayer.js';
-import { openDetails } from '../../composables/useDetails.js';
+import EntryTable from '../EntryTable.vue';
+import EntryGrid from '../EntryGrid.vue';
 
 // level is one of 'artists' | 'albums' | 'tracks' — the current drill-down
 // depth. selectedArtist/selectedAlbum are set as the user drills in.
+// Exposed (auto-unwrapped by defineExpose) so App.vue can tell whether a
+// file listing — and therefore the presentation toggle — is showing.
 const level = ref('artists');
 const selectedArtist = ref(null);
 const selectedAlbum = ref(null);
@@ -73,27 +73,23 @@ function onAlbumClick(album) {
   showTracks(selectedArtist.value, album.album);
 }
 
-function onTrackClick(entry) {
-  openDetails(entry.path);
-}
-
-function onPlay(entry) {
-  playTrack(entry);
+function reloadTracks() {
+  return showTracks(selectedArtist.value, selectedAlbum.value);
 }
 
 // Re-fetches whatever level is currently displayed — for App.vue's
-// refreshCurrentView when artist-album is the active view.
+// refreshCurrentView when artist-album is the active grouping.
 function reloadArtistAlbum() {
   if (level.value === 'albums') {
     return showAlbums(selectedArtist.value);
   }
   if (level.value === 'tracks') {
-    return showTracks(selectedArtist.value, selectedAlbum.value);
+    return reloadTracks();
   }
   return showArtists();
 }
 
-defineExpose({ showArtists, showAlbums, showTracks, reloadArtistAlbum });
+defineExpose({ level, showArtists, showAlbums, showTracks, reloadArtistAlbum });
 </script>
 
 <template>
@@ -112,7 +108,7 @@ defineExpose({ showArtists, showAlbums, showTracks, reloadArtistAlbum });
       </template>
       <template v-if="level === 'tracks'">
         <span> / </span>
-        <button class="text-neutral-200 font-medium" @click="showTracks(selectedArtist, selectedAlbum)">{{ selectedAlbum }}</button>
+        <button class="text-neutral-200 font-medium" @click="reloadTracks">{{ selectedAlbum }}</button>
       </template>
     </div>
 
@@ -143,46 +139,9 @@ defineExpose({ showArtists, showAlbums, showTracks, reloadArtistAlbum });
       </template>
     </div>
 
-    <div v-else class="overflow-x-auto rounded-lg border border-neutral-800">
-      <table class="w-full text-sm text-left">
-        <thead class="bg-neutral-900 text-neutral-400 uppercase text-xs">
-          <tr>
-            <th class="px-4 py-3">Cover</th>
-            <th class="px-4 py-3">Path</th>
-            <th class="px-4 py-3">Format</th>
-            <th class="px-4 py-3">Duration</th>
-            <th class="px-4 py-3">Status</th>
-            <th class="px-4 py-3">Artist / Album / Title / Track</th>
-            <th class="px-4 py-3">Play</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-neutral-800">
-          <tr
-            v-for="entry in tracks"
-            :key="entry.path"
-            class="cursor-pointer hover:bg-neutral-900"
-            @click="onTrackClick(entry)"
-          >
-            <td class="px-4 py-3">
-              <img v-if="coverSrc(entry)" :src="coverSrc(entry)" class="w-10 h-10 rounded object-cover" alt="" />
-              <div v-else class="w-10 h-10 rounded bg-neutral-800"></div>
-            </td>
-            <td class="px-4 py-3 font-mono text-xs">{{ entry.path }}</td>
-            <td class="px-4 py-3 uppercase">{{ entry.format }}</td>
-            <td class="px-4 py-3">{{ formatDuration(entry.duration_seconds) }}</td>
-            <td class="px-4 py-3" :class="statusClass(entry)">{{ statusLabel(entry) }}</td>
-            <td class="px-4 py-3">
-              <span v-if="entry.status === 'identified'">{{ metadataText(entry) }}</span>
-              <span v-else-if="hasRawMetadata(entry)" class="italic text-neutral-500" title="From the file's own tags, not yet identified">{{ metadataText(entry) }}</span>
-              <span v-else>—</span>
-            </td>
-            <td class="px-4 py-3" @click.stop>
-              <span v-if="entry.status === 'missing'">—</span>
-              <button v-else class="play-button text-neutral-300 hover:text-white" title="Play" @click="onPlay(entry)">&#9654;</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <template v-else>
+      <EntryTable v-if="store.presentation === 'table'" :entries="tracks" :sortable="false" @refresh="reloadTracks" />
+      <EntryGrid v-else :entries="tracks" />
+    </template>
   </div>
 </template>
