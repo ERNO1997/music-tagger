@@ -8,12 +8,21 @@ import (
 	"music-tagger/internal/usecases"
 )
 
+// RelocationEntry is one file successfully relocated by the current (or
+// most recently completed) relocate job, letting a client that tracks a
+// selection by path update a stale path once a file moves.
+type RelocationEntry struct {
+	OldPath string `json:"old_path"`
+	NewPath string `json:"new_path"`
+}
+
 // RelocateStatusResponse is the JSON representation of the relocate
 // manager's current/most recent state, per GET /api/v1/library/relocate/status.
 type RelocateStatusResponse struct {
-	Running   bool `json:"running"`
-	Processed int  `json:"processed"`
-	Total     int  `json:"total"`
+	Running     bool              `json:"running"`
+	Processed   int               `json:"processed"`
+	Total       int               `json:"total"`
+	Relocations []RelocationEntry `json:"relocations,omitempty"`
 }
 
 // RelocateHandler triggers and reports on the background relocate job.
@@ -50,12 +59,21 @@ func (h *RelocateHandler) Trigger(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{"status": "accepted"})
 }
 
-// Status reports whether a relocate job is currently running and its progress.
+// Status reports whether a relocate job is currently running, its
+// progress, and every file it has successfully relocated so far.
 func (h *RelocateHandler) Status(c *fiber.Ctx) error {
 	status := h.relocate.Status()
+	relocations := h.relocate.Relocations()
+
+	entries := make([]RelocationEntry, 0, len(relocations))
+	for _, r := range relocations {
+		entries = append(entries, RelocationEntry{OldPath: r.OldPath, NewPath: r.NewPath})
+	}
+
 	return c.JSON(RelocateStatusResponse{
-		Running:   status.Running,
-		Processed: status.Processed,
-		Total:     status.Total,
+		Running:     status.Running,
+		Processed:   status.Processed,
+		Total:       status.Total,
+		Relocations: entries,
 	})
 }

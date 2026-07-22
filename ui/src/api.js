@@ -18,6 +18,19 @@ export async function fetchLibrary(params) {
   return res.json();
 }
 
+export async function fetchSelection(body, params) {
+  const res = await fetch(`/api/v1/library/selection?${params.toString()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    throw new Error(errBody.error || `request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchTree(params) {
   const res = await fetch(`/api/v1/library/tree?${params.toString()}`);
   if (!res.ok) {

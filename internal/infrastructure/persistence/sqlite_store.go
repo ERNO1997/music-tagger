@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -848,6 +849,16 @@ var librarySortColumns = map[string]string{
 func buildLibraryWhere(filter usecases.LibraryFilter) (string, []any) {
 	var clauses []string
 	var args []any
+
+	if len(filter.Paths) > 0 {
+		placeholders := strings.Repeat("?,", len(filter.Paths))
+		placeholders = placeholders[:len(placeholders)-1]
+		args = append(args, make([]any, len(filter.Paths))...)
+		for i, p := range filter.Paths {
+			args[i] = p
+		}
+		return "path IN (" + placeholders + ")", args
+	}
 
 	if filter.Status != "" {
 		if domain.TrackingStatus(filter.Status) == domain.StatusMissing {

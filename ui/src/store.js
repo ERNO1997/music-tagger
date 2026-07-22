@@ -15,6 +15,11 @@ export const store = reactive({
   // resolveSelection on the API side), so this never enumerates paths
   // client-side.
   selectionMode: 'explicit',
+  // Whether the table/grid view is currently showing only the explicitly
+  // selected files (via the selection endpoint) instead of the current
+  // filter (via GET /api/v1/library). Meaningless in 'filter' selection
+  // mode, where the current filtered listing already is the selection.
+  showSelectedOnly: false,
   total: 0,
   lastEntries: [],
   currentView: 'table',

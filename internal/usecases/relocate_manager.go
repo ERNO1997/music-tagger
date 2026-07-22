@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 )
 
 // ErrRelocateInProgress is returned by RelocateManager.Start when a
@@ -22,6 +23,14 @@ var ErrBlockedByScan = errors.New("blocked by a running scan refresh")
 // RelocateStatus is a snapshot of the current/most recent relocate job.
 type RelocateStatus = JobStatus
 
+// Relocation is one file successfully moved by a relocate job, reported so
+// a client tracking a selection by path can update a stale path once a
+// file moves.
+type Relocation struct {
+	OldPath string
+	NewPath string
+}
+
 // RelocateManager coordinates a single background relocate job (over a
 // list of paths) at a time, via its own JobManager. Unlike identify,
 // enrich, and tag — which share no concurrency guard with anything —
@@ -32,6 +41,13 @@ type RelocateManager struct {
 	relocate   *RelocateFile
 	job        JobManager
 	scanStatus StatusChecker
+
+	// mu guards relocations, which is accumulated by the job goroutine
+	// (Start) and read concurrently by Relocations() (typically an HTTP
+	// status poll) — a separate mutex from JobManager's own, since
+	// relocations isn't part of the shared JobStatus.
+	mu          sync.Mutex
+	relocations []Relocation
 }
 
 func NewRelocateManager(relocate *RelocateFile, scanStatus StatusChecker) *RelocateManager {
@@ -48,17 +64,25 @@ func (m *RelocateManager) Start(paths []string) error {
 		return ErrBlockedByScan
 	}
 
+	m.mu.Lock()
+	m.relocations = nil
+	m.mu.Unlock()
+
 	return m.job.Start(func(report func(processed, total int)) {
 		total := len(paths)
 		report(0, total)
 
 		for i, path := range paths {
-			skipped, err := m.relocate.Relocate(context.Background(), path)
+			newPath, skipped, err := m.relocate.Relocate(context.Background(), path)
 			switch {
 			case skipped:
 				log.Printf("relocate job: %s is not a tracked, identified, and tagged file, skipping", path)
 			case err != nil:
 				log.Printf("relocate job: %s: %v", path, err)
+			default:
+				m.mu.Lock()
+				m.relocations = append(m.relocations, Relocation{OldPath: path, NewPath: newPath})
+				m.mu.Unlock()
 			}
 			report(i+1, total)
 		}
@@ -68,4 +92,12 @@ func (m *RelocateManager) Start(paths []string) error {
 // Status returns a snapshot of the current/most recent relocate job.
 func (m *RelocateManager) Status() RelocateStatus {
 	return m.job.Status()
+}
+
+// Relocations returns every file successfully relocated by the current (or
+// most recently completed) job, accumulated since Start was last called.
+func (m *RelocateManager) Relocations() []Relocation {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Relocation(nil), m.relocations...)
 }

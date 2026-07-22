@@ -1,5 +1,5 @@
 import { reactive } from 'vue';
-import { getSelectionCount, getSelectionBody } from '../store.js';
+import { store, getSelectionCount, getSelectionBody } from '../store.js';
 import { formatEta, IDENTIFY_ETA_THRESHOLD } from '../format.js';
 import {
   fetchScanStatus,
@@ -76,9 +76,29 @@ export function useJobs({ refreshCurrentView }) {
       relocate.running = status.running;
       relocate.processed = status.processed;
       relocate.total = status.total;
+      reconcileRelocatedSelection(status.relocations);
       await refreshCurrentView();
     },
   });
+
+  // A relocate job changes a file's tracked path server-side; without this,
+  // a selected file would silently fall out of store.selectedPaths (it's
+  // still keyed by the now-stale old path) once the view refreshes under
+  // its new one. Safe to run on every poll tick: status.relocations is a
+  // full accumulation since the job started (not just the delta since the
+  // last poll), and once a path's swap is applied, its old path is no
+  // longer selected, so re-applying the same list is a no-op.
+  function reconcileRelocatedSelection(relocations) {
+    if (!relocations) {
+      return;
+    }
+    for (const { old_path: oldPath, new_path: newPath } of relocations) {
+      if (store.selectedPaths.has(oldPath)) {
+        store.selectedPaths.delete(oldPath);
+        store.selectedPaths.add(newPath);
+      }
+    }
+  }
 
   function reportError(message) {
     libraryStatus.text = message;

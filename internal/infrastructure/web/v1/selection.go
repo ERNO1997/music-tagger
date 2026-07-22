@@ -59,3 +59,33 @@ func resolveSelection(c *fiber.Ctx, store usecases.TrackingStore) ([]string, err
 	}
 	return paths, nil
 }
+
+// selectionFilter parses c's body as a SelectionRequest and returns the
+// LibraryFilter it resolves to: Paths set directly to req.Paths when
+// non-empty, otherwise the other fields set from req.Filter. Unlike
+// resolveSelection, this never calls QueryPaths — the caller reads matching
+// entries directly via QueryPage, so there's no need to expand a filter
+// into a concrete path list first. Returns a 400 fiber.Error if the body is
+// invalid or neither paths nor a filter is given.
+func selectionFilter(c *fiber.Ctx) (usecases.LibraryFilter, error) {
+	var req SelectionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+
+	if len(req.Paths) > 0 {
+		return usecases.LibraryFilter{Paths: req.Paths}, nil
+	}
+
+	if req.Filter == nil {
+		return usecases.LibraryFilter{}, fiber.NewError(fiber.StatusBadRequest, "paths must not be empty")
+	}
+
+	return usecases.LibraryFilter{
+		Status:    req.Filter.Status,
+		Tagged:    req.Filter.Tagged,
+		Relocated: req.Filter.Relocated,
+		HasLyrics: req.Filter.HasLyrics,
+		Search:    req.Filter.Search,
+	}, nil
+}

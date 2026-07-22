@@ -213,6 +213,13 @@ type LibraryFilter struct {
 	// Search is a case-insensitive substring match against path, artist,
 	// album, and title. Empty means no filter.
 	Search string
+
+	// Paths restricts a read to exactly these paths when non-empty, taking
+	// priority over every other field above (which are ignored entirely in
+	// that case) — mirroring how resolveSelection already treats an
+	// explicit path list as taking priority over a filter for the trigger
+	// endpoints.
+	Paths []string
 }
 
 // LibrarySort orders a QueryPage read. By must be one of the allow-listed

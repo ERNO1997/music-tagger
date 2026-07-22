@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { store } from '../store.js';
+import { loadLibrary } from '../composables/useLibraryList.js';
 
 // Distinguishes three states: nothing selected (hidden), an explicit set
 // of paths selected (possibly spanning past pages), and "every file
@@ -29,13 +30,30 @@ const showSelectAllMatching = computed(
   () => store.selectionMode !== 'filter' && allPageSelected.value && store.total > store.selectedPaths.size,
 );
 
+// The toggle only makes sense in explicit mode (in filter mode, the current
+// filtered listing already is the selection) and only for the table/grid
+// views (tree/artist-album don't go through loadLibrary at all).
+const showToggle = computed(
+  () => store.selectionMode !== 'filter' && (store.currentView === 'table' || store.currentView === 'grid'),
+);
+
 function selectAllMatching() {
   store.selectionMode = 'filter';
+  store.showSelectedOnly = false;
+  loadLibrary();
 }
 
 function clearSelection() {
   store.selectionMode = 'explicit';
   store.selectedPaths.clear();
+  store.showSelectedOnly = false;
+  loadLibrary();
+}
+
+function toggleShowSelectedOnly() {
+  store.showSelectedOnly = !store.showSelectedOnly;
+  store.pageState.offset = 0;
+  loadLibrary();
 }
 </script>
 
@@ -46,7 +64,11 @@ function clearSelection() {
     class="text-sm text-neutral-300 mb-3 bg-neutral-900 border border-neutral-800 rounded-md px-3 py-2 flex items-center justify-between gap-4"
   >
     <span>{{ bannerText }}</span>
-    <div class="flex gap-3 shrink-0">
+    <div class="flex gap-3 shrink-0 items-center">
+      <label v-if="showToggle" class="flex items-center gap-1.5 cursor-pointer">
+        <input type="checkbox" :checked="store.showSelectedOnly" @change="toggleShowSelectedOnly" />
+        Show selected only
+      </label>
       <button v-if="showSelectAllMatching" @click="selectAllMatching" class="text-blue-400 hover:underline">
         Select all {{ store.total }} matching
       </button>

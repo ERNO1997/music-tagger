@@ -84,6 +84,7 @@ func main() {
 	deleteMissingFile := usecases.NewDeleteMissingFile(store)
 
 	libraryHandler := v1.NewLibraryHandler(store)
+	selectionHandler := v1.NewSelectionHandler(store)
 	scanHandler := v1.NewScanHandler(refreshManager)
 	identifyHandler := v1.NewIdentifyHandler(identifyManager, manualSearch, store, identifyConfigErr)
 	enrichHandler := v1.NewEnrichHandler(enrichManager, store)
@@ -104,7 +105,7 @@ func main() {
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler, treeHandler, artistAlbumHandler, audioHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler, treeHandler, artistAlbumHandler, audioHandler, selectionHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),
