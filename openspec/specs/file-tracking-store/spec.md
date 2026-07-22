@@ -135,7 +135,7 @@ The system SHALL compute a tracked file's Chromaprint fingerprint the first time
 - **THEN** the system SHALL record the failure reason on that file's tracked record, skip that file without treating its identification status as `not_found`, and continue processing the rest of the job
 
 ### Requirement: Enrichment results are recorded per file
-The system SHALL update a tracked file's record with the outcome of a cover art and lyrics enrichment attempt, without altering its fingerprint, identification status, or resolved metadata.
+The system SHALL update a tracked file's record with the outcome of a cover art and lyrics enrichment attempt, without altering its fingerprint, identification status, or resolved metadata. A tracked file's cover art path and/or lyrics MAY also be recorded by the `background-library-analysis` capability's automatic detection of a file's own embedded cover art/lyrics, using the same fields and subject to the same "leave existing data alone" rule described below — recording an outcome via either path SHALL NOT be overwritten by the other once set.
 
 #### Scenario: Cover art found and stored
 - **WHEN** enrichment resolves a front cover image for a tracked file's release
@@ -165,6 +165,10 @@ The system SHALL update a tracked file's record with the outcome of a cover art 
 - **WHEN** two tracked files resolve to the same release during enrichment
 - **THEN** the system SHALL reuse the same stored cover art file rather than downloading and storing a duplicate
 
+#### Scenario: Enrichment does not overwrite a cover art or lyrics value the background analysis pass already recorded
+- **WHEN** enrichment resolves a cover image or lyrics for a file whose tracking record already has a cover art path or lyrics stored (whether from a prior enrichment or from automatic embedded-content detection)
+- **THEN** the system SHALL leave the already-stored value unchanged rather than replacing it
+
 ### Requirement: Tagging results are recorded per file
 The system SHALL update a tracked file's record with the outcome of a tag-writing attempt. On success, the system SHALL also update the stored size and modification time to match the file's actual state after writing (since writing tags changes the file itself), without altering its fingerprint, identification status, resolved metadata, cover art path, or lyrics.
 
@@ -181,7 +185,7 @@ The system SHALL update a tracked file's record with the outcome of a tag-writin
 - **THEN** the system SHALL skip that file without recording a tagging outcome for it and without aborting tagging of the rest of the batch
 
 ### Requirement: Relocation results are recorded per file
-The system SHALL update a tracked file's record with the outcome of a relocation attempt, without altering its fingerprint, identification status, resolved metadata, cover art path, lyrics, or tagged outcome. On a successful relocation, the record's path SHALL be updated to the file's new location as part of the same update.
+The system SHALL update a tracked file's record with the outcome of a relocation attempt, without altering its fingerprint, identification status, resolved metadata, cover art path, lyrics, or tagged outcome. On a successful relocation, the record's path SHALL be updated to the file's new location as part of the same update. A tracked file MAY also be marked `relocated` by the `background-library-analysis` capability's automatic detection that its current path already equals its computed canonical destination, without any file having been moved.
 
 #### Scenario: Relocation succeeds
 - **WHEN** a file is successfully moved to its computed destination path
@@ -194,6 +198,10 @@ The system SHALL update a tracked file's record with the outcome of a relocation
 #### Scenario: Relocation attempted on a file that is not both identified and tagged
 - **WHEN** relocation is requested for a file that is not yet `identified`, or is identified but not yet tagged
 - **THEN** the system SHALL skip that file without recording a relocation outcome for it and without aborting relocation of the rest of the batch
+
+#### Scenario: A file passively detected as already relocated does not have its path changed
+- **WHEN** the background analysis pass marks a file `relocated` because it found the file already at its canonical destination
+- **THEN** the system SHALL mark it relocated without altering its tracked path, since the file was never moved
 
 ### Requirement: Filtered, sorted, and paginated reads
 The system SHALL support reading tracked records filtered by effective status, tagged outcome, relocated outcome, lyrics outcome, and/or cover art outcome; searched by a case-insensitive substring match against path, artist, album, title, and raw title/artist/album; sorted by an allow-listed set of columns (path, status, artist, album, duration, year) in ascending or descending order with a deterministic tie-break so repeated reads against unchanged data return the same order; and paginated by a result limit and offset — reporting the total number of matching records independent of the page size. This is distinct from the full, unfiltered table load used internally for scan change-detection, which is unaffected by this requirement.

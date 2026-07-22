@@ -28,6 +28,14 @@ type EnrichmentInput struct {
 	Title            string
 	Album            string
 	DurationSeconds  int
+
+	// ExistingCoverArtPath and ExistingLyrics are the file's tracking
+	// record's already-stored values, if any — from a prior enrichment or
+	// from the background-library-analysis capability's automatic
+	// embedded-content detection. Non-empty means Enrich SHALL leave that
+	// field untouched rather than replacing it.
+	ExistingCoverArtPath string
+	ExistingLyrics       string
 }
 
 // EnrichFile resolves and stores cover art and lyrics for one
@@ -61,8 +69,14 @@ func (u *EnrichFile) Enrich(ctx context.Context, input EnrichmentInput) error {
 // disk (from enriching another track on the same release), it's reused
 // without a redundant Cover Art Archive call. If no cover art is available
 // anywhere in the release-group, the file's cover art path is simply left
-// unset — not an error.
+// unset — not an error. If the file's tracking record already has a cover
+// art path stored (from a prior enrichment or automatic embedded-content
+// detection), it's left untouched rather than replaced.
 func (u *EnrichFile) enrichCoverArt(ctx context.Context, input EnrichmentInput) error {
+	if input.ExistingCoverArtPath != "" {
+		return nil
+	}
+
 	if existingPath, exists := u.storage.Path(input.ReleaseMBID); exists {
 		return u.store.RecordCoverArt(ctx, input.Path, existingPath)
 	}
@@ -86,8 +100,14 @@ func (u *EnrichFile) enrichCoverArt(ctx context.Context, input EnrichmentInput) 
 // enrichLyrics resolves lyrics via LRCLIB given the file's resolved
 // artist/title/album/duration. If LRCLIB has no entry, or marks the track
 // instrumental, the file's lyrics fields are simply left unset — not an
-// error.
+// error. If the file's tracking record already has lyrics stored (from a
+// prior enrichment or automatic embedded-content detection), they're left
+// untouched rather than replaced.
 func (u *EnrichFile) enrichLyrics(ctx context.Context, input EnrichmentInput) error {
+	if input.ExistingLyrics != "" {
+		return nil
+	}
+
 	plainLyrics, syncedLyrics, found, err := u.lyrics.Lookup(ctx, input.Artist, input.Title, input.Album, input.DurationSeconds)
 	if err != nil {
 		return err

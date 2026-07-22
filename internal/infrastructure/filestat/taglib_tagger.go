@@ -97,6 +97,33 @@ func (t *TagLibTagger) ReadEmbeddedTags(ctx context.Context, path string) (useca
 	return result, nil
 }
 
+// ReadEmbeddedContent reads path's actual embedded cover image bytes and
+// lyrics text live from disk — the same underlying TagLib read
+// ReadEmbeddedTags summarizes as booleans. coverArt is nil and lyrics is
+// empty when absent, not an error.
+func (t *TagLibTagger) ReadEmbeddedContent(ctx context.Context, path string) (coverArt []byte, lyrics string, err error) {
+	err = withCorrectExtension(path, func(workingPath string) error {
+		tags, terr := taglib.ReadTags(workingPath)
+		if terr != nil {
+			return fmt.Errorf("reading tags for %s: %w", path, terr)
+		}
+		lyrics = first(tags[taglib.Lyrics])
+
+		img, ierr := taglib.ReadImage(workingPath)
+		if ierr != nil {
+			return fmt.Errorf("reading embedded image for %s: %w", path, ierr)
+		}
+		if len(img) > 0 {
+			coverArt = img
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return coverArt, lyrics, nil
+}
+
 func setIfNonEmpty(tags map[string][]string, key, value string) {
 	if value != "" {
 		tags[key] = []string{value}

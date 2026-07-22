@@ -53,6 +53,9 @@ func (h *RelocateHandler) Trigger(c *fiber.Ctx) error {
 		if errors.Is(err, usecases.ErrBlockedByScan) {
 			return fiber.NewError(fiber.StatusConflict, "a scan refresh is in progress")
 		}
+		if errors.Is(err, usecases.ErrBlockedByAnalysis) {
+			return fiber.NewError(fiber.StatusConflict, "a background analysis pass is in progress")
+		}
 		return fiber.NewError(fiber.StatusInternalServerError, err.Error())
 	}
 

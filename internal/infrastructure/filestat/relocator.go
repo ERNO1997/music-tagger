@@ -53,20 +53,30 @@ func albumDirName(year int, album string) string {
 	return fmt.Sprintf("%d - %s", year, sanitizedAlbum)
 }
 
-// Relocate moves path to its computed destination
+// ComputeDestination returns path's canonical destination under
 // {musicRoot}/{sanitized artist}/{year - }{sanitized album}/{zero-padded
 // track} - {sanitized title}{ext} — the year prefix is omitted when the
-// release has no usable date (Year <= 0). If the destination already
-// exists, or the move fails at any step, path is left untouched and an
-// error is returned. If the file is already at its computed destination
-// (e.g. relocating an already-relocated file again after a no-op
-// re-identification), this is a successful no-op, not a collision with
-// itself.
-func (r *PathRelocator) Relocate(ctx context.Context, path string, meta usecases.RelocateInput) (string, error) {
+// release has no usable date (Year <= 0) — with no filesystem access.
+// path is used only for its extension; it need not exist on disk. Reused
+// by Relocate (which then performs the move) and by the background
+// analysis pass (which only needs to compare a file's current path
+// against this, never moving it).
+func (r *PathRelocator) ComputeDestination(path string, meta usecases.RelocateInput) string {
 	ext := filepath.Ext(path)
 	dir := filepath.Join(r.musicRoot, sanitizeSegment(meta.Artist), albumDirName(meta.Year, meta.Album))
 	filename := fmt.Sprintf("%02d - %s%s", meta.TrackNumber, sanitizeSegment(meta.Title), ext)
-	dest := filepath.Join(dir, filename)
+	return filepath.Join(dir, filename)
+}
+
+// Relocate moves path to its computed destination (see ComputeDestination).
+// If the destination already exists, or the move fails at any step, path is
+// left untouched and an error is returned. If the file is already at its
+// computed destination (e.g. relocating an already-relocated file again
+// after a no-op re-identification), this is a successful no-op, not a
+// collision with itself.
+func (r *PathRelocator) Relocate(ctx context.Context, path string, meta usecases.RelocateInput) (string, error) {
+	dest := r.ComputeDestination(path, meta)
+	dir := filepath.Dir(dest)
 
 	if filepath.Clean(dest) == filepath.Clean(path) {
 		return dest, nil

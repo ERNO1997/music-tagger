@@ -7,6 +7,7 @@ import {
   fetchEnrichStatus,
   fetchTagStatus,
   fetchRelocateStatus,
+  fetchAnalyzeStatus,
   postScanTrigger,
   postIdentifyTrigger,
   postEnrichTrigger,
@@ -27,6 +28,7 @@ export function useJobs({ refreshCurrentView }) {
   const enrich = reactive({ running: false, processed: 0, total: 0 });
   const tag = reactive({ running: false, processed: 0, total: 0 });
   const relocate = reactive({ running: false, processed: 0, total: 0 });
+  const analyze = reactive({ running: false, processed: 0, total: 0 });
 
   const scanPoll = pollJob({
     fetchStatus: fetchScanStatus,
@@ -80,6 +82,43 @@ export function useJobs({ refreshCurrentView }) {
       await refreshCurrentView();
     },
   });
+
+  // Unlike the other four jobs, analysis has no trigger endpoint — it
+  // starts automatically, server-side, right after any refresh (startup or
+  // on-demand) completes. So instead of pollJob's start-on-trigger,
+  // stop-when-not-running shape, this polls continuously from app mount
+  // onward, picking up whenever the next automatic pass begins.
+  //
+  // Unlike the other four jobs, refreshCurrentView() is deliberately called
+  // only once — on the tick the pass finishes (analyzeWasRunning tracks the
+  // previous tick to detect that transition) — not on every tick while it's
+  // running. Analysis walks the entire library and can run far longer than
+  // a user-selected batch job; refreshing every ~1s for its whole duration
+  // would re-fetch and re-render the current view continuously, and
+  // loadLibrary() unconditionally overwrites libraryStatus.text with
+  // "Showing X of Y…" on every call, fighting with the "Analyzing… X/Y"
+  // text set just below and flickering between the two.
+  let analyzeWasRunning = false;
+  async function pollAnalyzeStatus() {
+    try {
+      const status = await fetchAnalyzeStatus();
+      analyze.running = status.running;
+      analyze.processed = status.processed;
+      analyze.total = status.total;
+      if (status.running) {
+        libraryStatus.text = status.total > 0
+          ? `Analyzing… ${status.processed}/${status.total}`
+          : 'Analyzing…';
+        libraryStatus.isError = false;
+      }
+      if (analyzeWasRunning && !status.running) {
+        await refreshCurrentView();
+      }
+      analyzeWasRunning = status.running;
+    } catch (err) {
+      // Status endpoint unreachable — skip this tick, try again next interval.
+    }
+  }
 
   // A relocate job changes a file's tracked path server-side; without this,
   // a selected file would silently fall out of store.selectedPaths (it's
@@ -239,6 +278,8 @@ export function useJobs({ refreshCurrentView }) {
     } catch (err) {
       // Relocate button stays disabled until a selection is made anyway.
     }
+    await pollAnalyzeStatus();
+    setInterval(pollAnalyzeStatus, 1000);
   }
 
   return {
@@ -247,6 +288,7 @@ export function useJobs({ refreshCurrentView }) {
     enrich,
     tag,
     relocate,
+    analyze,
     triggerRefresh,
     triggerIdentify,
     triggerEnrich,

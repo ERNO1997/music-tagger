@@ -56,13 +56,15 @@ func (m *EnrichManager) Start(paths []string) error {
 				log.Printf("enrich job: %s is not yet identified, skipping", path)
 			default:
 				input := EnrichmentInput{
-					Path:             path,
-					ReleaseMBID:      rec.ReleaseMBID,
-					ReleaseGroupMBID: rec.ReleaseGroupMBID,
-					Artist:           rec.Artist,
-					Title:            rec.Title,
-					Album:            rec.Album,
-					DurationSeconds:  int(rec.DurationSeconds),
+					Path:                 path,
+					ReleaseMBID:          rec.ReleaseMBID,
+					ReleaseGroupMBID:     rec.ReleaseGroupMBID,
+					Artist:               rec.Artist,
+					Title:                rec.Title,
+					Album:                rec.Album,
+					DurationSeconds:      int(rec.DurationSeconds),
+					ExistingCoverArtPath: rec.CoverArtPath,
+					ExistingLyrics:       rec.Lyrics,
 				}
 				if err := m.enrich.Enrich(context.Background(), input); err != nil {
 					log.Printf("enrich job: %s: %v", path, err)

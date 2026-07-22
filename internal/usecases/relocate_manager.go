@@ -20,6 +20,12 @@ var ErrRelocateInProgress = ErrJobInProgress
 // the same underlying ErrJobInProgress value.
 var ErrBlockedByScan = errors.New("blocked by a running scan refresh")
 
+// ErrBlockedByAnalysis is returned by RelocateManager.Start when a
+// background analysis pass is currently running — the same reason scan
+// and relocate already exclude each other: both analysis and relocate
+// read/write a file's tracked path, and running concurrently could race.
+var ErrBlockedByAnalysis = errors.New("blocked by a running background analysis pass")
+
 // RelocateStatus is a snapshot of the current/most recent relocate job.
 type RelocateStatus = JobStatus
 
@@ -38,9 +44,10 @@ type Relocation struct {
 // scan refresh walking /music concurrently with a file being moved could
 // see it as both missing at its old location and new at its new one.
 type RelocateManager struct {
-	relocate   *RelocateFile
-	job        JobManager
-	scanStatus StatusChecker
+	relocate       *RelocateFile
+	job            JobManager
+	scanStatus     StatusChecker
+	analysisStatus StatusChecker
 
 	// mu guards relocations, which is accumulated by the job goroutine
 	// (Start) and read concurrently by Relocations() (typically an HTTP
@@ -54,14 +61,26 @@ func NewRelocateManager(relocate *RelocateFile, scanStatus StatusChecker) *Reloc
 	return &RelocateManager{relocate: relocate, scanStatus: scanStatus}
 }
 
+// SetAnalysisStatus wires the background analysis pass's status checker in
+// after both managers exist, mirroring RefreshManager.SetRelocateStatus.
+// Must be called before the automatic startup scan (and its chained
+// analysis pass) is triggered.
+func (m *RelocateManager) SetAnalysisStatus(s StatusChecker) {
+	m.analysisStatus = s
+}
+
 // Start begins relocating paths in the background if no relocate job is
-// currently running and no scan refresh is running. It returns
-// ErrRelocateInProgress or ErrBlockedByScan accordingly. A path that isn't
+// currently running, no scan refresh is running, and no background
+// analysis pass is running. It returns ErrRelocateInProgress,
+// ErrBlockedByScan, or ErrBlockedByAnalysis accordingly. A path that isn't
 // both identified and tagged is skipped, logged, and does not abort the
 // rest of the job — same as a per-file relocation failure.
 func (m *RelocateManager) Start(paths []string) error {
 	if m.scanStatus != nil && m.scanStatus.Status().Running {
 		return ErrBlockedByScan
+	}
+	if m.analysisStatus != nil && m.analysisStatus.Status().Running {
+		return ErrBlockedByAnalysis
 	}
 
 	m.mu.Lock()

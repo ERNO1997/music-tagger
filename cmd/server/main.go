@@ -81,6 +81,11 @@ func main() {
 	relocateManager := usecases.NewRelocateManager(relocateFile, refreshManager)
 	refreshManager.SetRelocateStatus(relocateManager)
 
+	analysisManager := usecases.NewAnalysisManager(fingerprinter, tagger, coverArtStore, store, relocator)
+	analysisManager.SetRelocateStatus(relocateManager)
+	refreshManager.SetAnalysisManager(analysisManager)
+	relocateManager.SetAnalysisStatus(analysisManager)
+
 	deleteMissingFile := usecases.NewDeleteMissingFile(store)
 
 	libraryHandler := v1.NewLibraryHandler(store)
@@ -102,10 +107,11 @@ func main() {
 	treeHandler := v1.NewTreeHandler(treeBrowse, musicRoot)
 	artistAlbumHandler := v1.NewArtistAlbumHandler(store)
 	audioHandler := v1.NewAudioHandler(store)
+	analyzeHandler := v1.NewAnalyzeHandler(analysisManager)
 
 	app := fiber.New()
 
-	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler, treeHandler, artistAlbumHandler, audioHandler, selectionHandler)
+	v1.RegisterRoutes(app, libraryHandler, scanHandler, identifyHandler, enrichHandler, coverHandler, lyricsHandler, tagHandler, embeddedTagsHandler, relocateHandler, fingerprintHandler, candidatesHandler, coverBrowseHandler, deleteHandler, treeHandler, artistAlbumHandler, audioHandler, selectionHandler, analyzeHandler)
 
 	app.Use("/", filesystem.New(filesystem.Config{
 		Root: http.FS(ui.Assets),

@@ -422,6 +422,14 @@ type EmbeddedTags struct {
 type Tagger interface {
 	Tag(ctx context.Context, path string, meta TagInput) error
 	ReadEmbeddedTags(ctx context.Context, path string) (EmbeddedTags, error)
+
+	// ReadEmbeddedContent reads path's actual embedded cover image bytes
+	// and lyrics text, live from disk — the same underlying data
+	// ReadEmbeddedTags summarizes as HasCoverArt/HasLyrics booleans, used
+	// by the background-library-analysis capability to store the content
+	// itself rather than just detect its presence. coverArt is nil and
+	// lyrics is empty when absent.
+	ReadEmbeddedContent(ctx context.Context, path string) (coverArt []byte, lyrics string, err error)
 }
 
 // RelocateInput is the resolved metadata needed to compute an

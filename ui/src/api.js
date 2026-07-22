@@ -191,6 +191,14 @@ export async function fetchRelocateStatus() {
   return res.json();
 }
 
+export async function fetchAnalyzeStatus() {
+  const res = await fetch('/api/v1/library/analyze/status');
+  if (!res.ok) {
+    throw new Error(`status request failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function postScanTrigger() {
   const res = await fetch('/api/v1/library/scan', { method: 'POST' });
   if (res.status !== 202 && res.status !== 409) {
