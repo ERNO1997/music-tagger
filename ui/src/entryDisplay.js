@@ -27,3 +27,24 @@ export function hasRawMetadata(entry) {
 export function coverSrc(entry) {
   return entry.has_cover_art ? `/api/v1/library/cover?path=${encodeURIComponent(entry.path)}` : null;
 }
+
+// displayPath strips the mounted volume's fixed root prefix (docker-compose's
+// MUSIC_DIR, always /music) from a path for display only — entry.path itself
+// (selection, details lookup, play/delete calls) is never touched.
+export function displayPath(path) {
+  return path.startsWith('/music/') ? path.slice('/music/'.length) : path;
+}
+
+const METADATA_COMPLETENESS_FIELDS = [
+  ['artist', 'artist'],
+  ['album', 'album'],
+  ['title', 'title'],
+  ['track_number', 'track number'],
+];
+
+// missingMetadataFields returns the human-readable names of whichever of
+// artist/album/title/track_number are absent on an identified entry — used
+// to name exactly what's missing in the completeness icon's tooltip.
+export function missingMetadataFields(entry) {
+  return METADATA_COMPLETENESS_FIELDS.filter(([key]) => !entry[key]).map(([, label]) => label);
+}

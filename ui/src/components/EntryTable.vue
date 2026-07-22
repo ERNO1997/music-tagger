@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { store } from '../store.js';
 import { formatDuration } from '../format.js';
-import { statusLabel, statusClass, metadataText, hasRawMetadata, coverSrc } from '../entryDisplay.js';
+import { statusLabel, statusClass, metadataText, hasRawMetadata, coverSrc, displayPath, missingMetadataFields } from '../entryDisplay.js';
 import { deleteLibraryEntry } from '../api.js';
 import { playTrack } from '../composables/usePlayer.js';
 import { openDetails } from '../composables/useDetails.js';
@@ -128,9 +128,6 @@ function onRowClick(entry) {
           </th>
           <th v-else class="px-4 py-3">Artist / Album / Title / Track</th>
           <th class="px-4 py-3">Lyrics</th>
-          <th class="px-4 py-3">Tagged</th>
-          <th class="px-4 py-3">Relocated</th>
-          <th class="px-4 py-3">Play</th>
           <th class="px-4 py-3">Actions</th>
         </tr>
       </thead>
@@ -149,7 +146,11 @@ function onRowClick(entry) {
             <img v-if="coverSrc(entry)" :src="coverSrc(entry)" class="w-10 h-10 rounded object-cover" alt="" />
             <div v-else class="w-10 h-10 rounded bg-neutral-800"></div>
           </td>
-          <td class="px-4 py-3 font-mono text-xs">{{ entry.path }}</td>
+          <td class="px-4 py-3 font-mono text-xs" :title="entry.path">
+            <span v-if="entry.relocated" class="text-green-400 mr-1" title="At its canonical relocated path">&#10003;</span>
+            <span v-else-if="entry.relocate_error" class="mr-1" :title="`Relocation failed: ${entry.relocate_error}`">&#9888;</span>
+            {{ displayPath(entry.path) }}
+          </td>
           <td class="px-4 py-3 uppercase">{{ entry.format }}</td>
           <td class="px-4 py-3">
             <template v-if="entry.error">—</template>
@@ -160,7 +161,11 @@ function onRowClick(entry) {
             <template v-else>{{ statusLabel(entry) }}</template>
           </td>
           <td class="px-4 py-3">
-            <span v-if="entry.status === 'identified'">{{ metadataText(entry) }}</span>
+            <template v-if="entry.status === 'identified'">
+              <span v-if="missingMetadataFields(entry).length === 0" class="text-green-400 mr-1" title="Artist, album, title, and track number are all present">&#10003;</span>
+              <span v-else class="text-yellow-400 mr-1" :title="`Missing: ${missingMetadataFields(entry).join(', ')}`">&#9888;</span>
+              <span>{{ metadataText(entry) }}</span>
+            </template>
             <span v-else-if="hasRawMetadata(entry)" class="italic text-neutral-500" title="From the file's own tags, not yet identified">{{ metadataText(entry) }}</span>
             <span v-else>—</span>
           </td>
@@ -169,22 +174,8 @@ function onRowClick(entry) {
             <span v-else-if="entry.has_lyrics" class="text-green-400" title="Lyrics available">&#9834;</span>
             <template v-else>—</template>
           </td>
-          <td class="px-4 py-3">
-            <span v-if="entry.tagged" class="text-green-400" title="Tagged">&#10003;</span>
-            <span v-else-if="entry.tag_error" class="text-red-400" :title="`Tagging failed: ${entry.tag_error}`">&#10007;</span>
-            <template v-else>—</template>
-          </td>
-          <td class="px-4 py-3">
-            <span v-if="entry.relocated" class="text-green-400" title="Relocated">&#10003;</span>
-            <span v-else-if="entry.relocate_error" class="text-red-400" :title="`Relocation failed: ${entry.relocate_error}`">&#10007;</span>
-            <template v-else>—</template>
-          </td>
           <td class="px-4 py-3" @click.stop>
-            <span v-if="entry.status === 'missing'">—</span>
-            <button v-else class="play-button text-neutral-300 hover:text-white" title="Play" @click="onPlay(entry)">&#9654;</button>
-          </td>
-          <td class="px-4 py-3" @click.stop>
-            <span v-if="entry.status !== 'missing'">—</span>
+            <button v-if="entry.status !== 'missing'" class="play-button text-neutral-300 hover:text-white mr-2" title="Play" @click="onPlay(entry)">&#9654;</button>
             <button v-else class="delete-entry-button text-red-400 hover:text-red-300" title="Delete this tracked entry (the file is already missing from disk)" @click="onDelete(entry)">&#128465;</button>
           </td>
         </tr>

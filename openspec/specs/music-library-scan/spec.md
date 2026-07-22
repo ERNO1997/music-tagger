@@ -105,11 +105,11 @@ The endpoint SHALL accept optional query parameters: `status` (one of `new`, `id
 - **THEN** the system SHALL apply the filter and search first, then sort, then paginate the result, consistently with `total` reflecting the post-filter, pre-pagination count
 
 ### Requirement: Web UI listing of scan results
-The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` (or, for the Folder and Artist-Album groupings, the `library-browsing` capability's tree/artist/album/track endpoints) and renders one page of results according to two independent choices: a **grouping** (All — the flat list; Folder — the mounted volume's directory structure; Artist-Album — resolved-or-raw-tag artist/album drill-down) and a **presentation** (Table or cover-forward Grid) applied to whatever file/track listing the current grouping is showing. It SHALL show, per entry, path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present. It SHALL reflect whether a refresh is currently running, allow selecting one or more entries (or all entries matching the current filter, across pages) regardless of grouping or presentation, provide bulk actions to identify, enrich, tag, and relocate the selected entries, provide a delete action for entries with status `missing`, provide a resolve action for entries with status `ambiguous`, provide a manual search action available from any entry's details view regardless of status, and allow opening a full details view for any single entry. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting (in table presentation), page navigation, and switching grouping and presentation independently.
+The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` (or, for the Folder and Artist-Album groupings, the `library-browsing` capability's tree/artist/album/track endpoints) and renders one page of results according to two independent choices: a **grouping** (All — the flat list; Folder — the mounted volume's directory structure; Artist-Album — resolved-or-raw-tag artist/album drill-down) and a **presentation** (Table or cover-forward Grid) applied to whatever file/track listing the current grouping is showing. It SHALL show, per entry, path, format, duration, identification status, a condensed resolved-metadata summary (or, when a file is not yet identified, its raw tag snapshot when captured, so a poorly-named file's actual title/artist is still visible), a cover art thumbnail when present, a lyrics indicator when present, a metadata-completeness indicator on the resolved-metadata summary for identified entries (distinguishing whether artist, album, title, and track number are all present, or naming whichever are missing), and a canonical-path indicator alongside the path itself (distinguishing a path that already matches the entry's computed relocation destination from one that doesn't, or where a relocation attempt has failed). It SHALL reflect whether a refresh is currently running, allow selecting one or more entries (or all entries matching the current filter, across pages) regardless of grouping or presentation, provide bulk actions to identify, enrich, tag, and relocate the selected entries, provide a delete action for entries with status `missing`, provide a resolve action for entries with status `ambiguous`, provide a manual search action available from any entry's details view regardless of status, and allow opening a full details view for any single entry. It SHALL provide controls for filtering by status/tagged/relocated/has-lyrics/has-cover-art, free-text search, column sorting (in table presentation), page navigation, and switching grouping and presentation independently.
 
 #### Scenario: Page loads scan results on open
 - **WHEN** a user opens the web UI in a browser
-- **THEN** the page SHALL default to the All grouping in table presentation, call `GET /api/v1/library`, and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a tagged indicator when present, and a relocated indicator when present
+- **THEN** the page SHALL default to the All grouping in table presentation, call `GET /api/v1/library`, and render one row per returned file for the current page, including its status, any resolved metadata, a cover art thumbnail when present, a lyrics indicator when present, a metadata-completeness indicator when identified, and a canonical-path indicator alongside its path
 
 #### Scenario: An unidentified file's row shows its raw tag snapshot instead of blank metadata
 - **WHEN** an entry's file has status `new`, `not_found`, or `ambiguous` and a captured raw tag snapshot
@@ -250,6 +250,26 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` (
 #### Scenario: Pagination is shared across presentations within a grouping
 - **WHEN** a user navigates to another page while browsing a grouping's file listing
 - **THEN** that page position SHALL apply regardless of which presentation is currently active, and switching presentation afterward SHALL NOT change or reset the current page
+
+#### Scenario: Metadata-completeness indicator names exactly what's missing
+- **WHEN** an identified entry is missing one or more of artist, album, title, or track number
+- **THEN** the UI SHALL show a warning indicator on that entry's metadata summary whose tooltip names exactly which of the four fields are missing, rather than a generic warning
+
+#### Scenario: Metadata-completeness indicator is not shown for unidentified entries
+- **WHEN** an entry's status is not `identified`
+- **THEN** the UI SHALL NOT show a metadata-completeness indicator for that entry
+
+#### Scenario: Canonical-path indicator reflects the entry's relocated state
+- **WHEN** an identified, tagged entry's current path already matches its computed relocation destination (whether reached via an explicit relocate action or detected passively)
+- **THEN** the UI SHALL show a check indicator alongside that entry's path
+
+#### Scenario: Canonical-path indicator surfaces a failed relocation attempt
+- **WHEN** an entry has a recorded relocation failure
+- **THEN** the UI SHALL show a warning indicator alongside that entry's path, with the failure reason available as a tooltip
+
+#### Scenario: Canonical-path indicator is absent when not applicable
+- **WHEN** an entry has neither been relocated (or passively detected as already at its destination) nor had a relocation attempt fail
+- **THEN** the UI SHALL show neither indicator alongside that entry's path
 
 ### Requirement: Toggling the table/grid view to show only the current selection
 The system SHALL expose a `POST /api/v1/library/selection` endpoint accepting the same request body shape as `POST /api/v1/library/identify` (`paths` or `filter`), plus the same `sort`/`order`/`limit`/`offset` query parameters as `GET /api/v1/library`, and returning a page of matching entries in the same shape as `GET /api/v1/library`'s response. The system SHALL provide a "show selected only" toggle, available in the table and grid views whenever one or more files are explicitly selected, that — while enabled — fetches that view's rows/cards from the selection endpoint instead of `GET /api/v1/library`, using that view's own current sort and pagination state, so the existing row/card checkboxes (rather than a separate control) serve as the way to remove a file from the selection. The toggle SHALL be unavailable (or a no-op) while "select all matching" (filter mode) is active, since the currently filtered listing already is the selection in that mode.

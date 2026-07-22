@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { store } from '../store.js';
 import { DETAILS_FIELD_LABELS, RAW_TAG_FIELD_LABELS, EMBEDDED_TAG_FIELD_LABELS } from '../format.js';
+import { displayPath } from '../entryDisplay.js';
 import {
   fetchCandidates,
   searchIdentify,
@@ -22,6 +23,8 @@ const visible = computed(() => !!detailsState.path);
 const entry = ref(null);
 
 const fields = ref([]); // [{ label, value }]
+const fingerprintExpanded = ref(false);
+const FINGERPRINT_PREVIEW_LENGTH = 40;
 const rawTagFields = ref([]); // [{ label, value }]
 const lyricsText = ref('');
 const showLyrics = ref(false);
@@ -74,6 +77,7 @@ async function loadDetails(path) {
   }
   entry.value = found;
   coverBustCache.value = 0;
+  fingerprintExpanded.value = false;
 
   fields.value = [];
   for (const [key, label, formatter] of DETAILS_FIELD_LABELS) {
@@ -81,7 +85,8 @@ async function loadDetails(path) {
     if (value === undefined || value === null || value === '') {
       continue;
     }
-    fields.value.push({ label, value: formatter ? formatter(value) : value });
+    const displayValue = key === 'path' ? displayPath(value) : formatter ? formatter(value) : value;
+    fields.value.push({ label, value: displayValue });
   }
 
   rawTagFields.value = [];
@@ -318,7 +323,17 @@ function onOverlayClick(event) {
       <dl class="px-5 py-4 space-y-2 text-sm">
         <div v-for="f in fields" :key="f.label" class="flex justify-between gap-4">
           <dt class="text-neutral-400">{{ f.label }}</dt>
-          <dd class="font-mono text-xs text-right break-all">{{ f.value }}</dd>
+          <dd v-if="f.label === 'Fingerprint' && f.value.length > FINGERPRINT_PREVIEW_LENGTH" class="font-mono text-xs text-right break-all">
+            <template v-if="fingerprintExpanded">
+              {{ f.value }}
+              <button type="button" class="text-blue-400 hover:underline" @click="fingerprintExpanded = false">Show less</button>
+            </template>
+            <template v-else>
+              {{ f.value.slice(0, FINGERPRINT_PREVIEW_LENGTH) }}…
+              <button type="button" class="text-blue-400 hover:underline" @click="fingerprintExpanded = true">See more…</button>
+            </template>
+          </dd>
+          <dd v-else class="font-mono text-xs text-right break-all">{{ f.value }}</dd>
         </div>
       </dl>
 
