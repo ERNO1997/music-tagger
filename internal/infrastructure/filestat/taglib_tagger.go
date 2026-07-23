@@ -46,6 +46,10 @@ func (t *TagLibTagger) Tag(ctx context.Context, path string, meta usecases.TagIn
 		if meta.Lyrics != "" {
 			tags[taglib.Lyrics] = []string{meta.Lyrics}
 		}
+		setIfNonEmpty(tags, taglib.MusicBrainzTrackID, meta.RecordingMBID)
+		setIfNonEmpty(tags, taglib.MusicBrainzAlbumID, meta.ReleaseMBID)
+		setIfNonEmpty(tags, taglib.MusicBrainzReleaseGroupID, meta.ReleaseGroupMBID)
+		setIfNonEmpty(tags, taglib.MusicBrainzArtistID, meta.ArtistMBID)
 
 		if err := taglib.WriteTags(workingPath, tags, 0); err != nil {
 			return fmt.Errorf("writing tags for %s: %w", path, err)
@@ -79,15 +83,19 @@ func (t *TagLibTagger) ReadEmbeddedTags(ctx context.Context, path string) (useca
 		}
 
 		result = usecases.EmbeddedTags{
-			Title:       first(tags[taglib.Title]),
-			Artist:      first(tags[taglib.Artist]),
-			Album:       first(tags[taglib.Album]),
-			AlbumArtist: first(tags[taglib.AlbumArtist]),
-			TrackNumber: parseLeadingNumber(first(tags[taglib.TrackNumber])),
-			DiscNumber:  parseLeadingNumber(first(tags[taglib.DiscNumber])),
-			Year:        parseLeadingNumber(first(tags[taglib.Date])),
-			HasLyrics:   first(tags[taglib.Lyrics]) != "",
-			HasCoverArt: len(props.Images) > 0,
+			Title:            first(tags[taglib.Title]),
+			Artist:           first(tags[taglib.Artist]),
+			Album:            first(tags[taglib.Album]),
+			AlbumArtist:      first(tags[taglib.AlbumArtist]),
+			TrackNumber:      parseLeadingNumber(first(tags[taglib.TrackNumber])),
+			DiscNumber:       parseLeadingNumber(first(tags[taglib.DiscNumber])),
+			Year:             parseLeadingNumber(first(tags[taglib.Date])),
+			RecordingMBID:    first(tags[taglib.MusicBrainzTrackID]),
+			ReleaseMBID:      first(tags[taglib.MusicBrainzAlbumID]),
+			ReleaseGroupMBID: first(tags[taglib.MusicBrainzReleaseGroupID]),
+			ArtistMBID:       first(tags[taglib.MusicBrainzArtistID]),
+			HasLyrics:        first(tags[taglib.Lyrics]) != "",
+			HasCoverArt:      len(props.Images) > 0,
 		}
 		return nil
 	})

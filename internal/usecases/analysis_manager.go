@@ -112,6 +112,22 @@ func (m *AnalysisManager) Status() AnalysisStatus {
 }
 
 func (m *AnalysisManager) analyzeOne(ctx context.Context, path string, rec domain.FileRecord) {
+	if m.detectIdentificationFromTags(ctx, path, rec) {
+		// The file's status/tagged outcome just changed — re-fetch so the
+		// remaining steps (in particular detectRelocated, which requires
+		// identified+tagged) see the fresh state within this same pass
+		// rather than only catching up on the next refresh cycle.
+		fresh, found, err := m.store.Get(ctx, path)
+		if err != nil {
+			log.Printf("analysis pass: %s: re-fetching after tag-based identification: %v", path, err)
+			return
+		}
+		if !found {
+			return
+		}
+		rec = fresh
+	}
+
 	m.fingerprint(ctx, path, rec)
 	m.detectEmbeddedContent(ctx, path, rec)
 	m.detectRelocated(ctx, path, rec)
@@ -212,4 +228,61 @@ func (m *AnalysisManager) detectRelocated(ctx context.Context, path string, rec 
 	if err := m.store.RecordRelocation(ctx, path, path); err != nil {
 		log.Printf("analysis pass: %s: marking already-relocated: %v", path, err)
 	}
+}
+
+// detectIdentificationFromTags treats a file's own embedded MusicBrainz
+// recording ID as authoritative over the tracking store: when present
+// alongside a non-empty embedded artist and title, and different from the
+// file's currently-stored recording MBID (including when nothing is
+// stored yet), it records the file as identified from the embedded tags
+// and marks it tagged — without calling AcoustID or MusicBrainz. Returns
+// true when it changed anything, so the caller can re-fetch rec before
+// running the remaining analysis steps.
+//
+// The comparison against rec.RecordingMBID is deliberate and load-bearing:
+// RecordIdentification unconditionally resets cover art, lyrics, tagged,
+// and relocated on every call where status becomes identified, since its
+// only other caller (on-demand identify) is always a deliberate
+// re-identification. Calling it here on every pass regardless of whether
+// anything changed would silently wipe tagged/relocated back to false on
+// every single pass — so this only calls it when the embedded recording ID
+// genuinely disagrees with what's already stored.
+func (m *AnalysisManager) detectIdentificationFromTags(ctx context.Context, path string, rec domain.FileRecord) bool {
+	embedded, err := m.tagger.ReadEmbeddedTags(ctx, path)
+	if err != nil {
+		log.Printf("analysis pass: %s: reading embedded tags for identification: %v", path, err)
+		return false
+	}
+
+	if embedded.RecordingMBID == "" || embedded.Artist == "" || embedded.Title == "" {
+		return false
+	}
+	if embedded.RecordingMBID == rec.RecordingMBID {
+		return false
+	}
+
+	result := IdentificationResult{
+		Status: domain.StatusIdentified,
+		Metadata: RecordingMetadata{
+			RecordingID:      embedded.RecordingMBID,
+			Artist:           embedded.Artist,
+			Album:            embedded.Album,
+			Title:            embedded.Title,
+			TrackNumber:      embedded.TrackNumber,
+			AlbumArtist:      embedded.AlbumArtist,
+			Year:             embedded.Year,
+			DiscNumber:       embedded.DiscNumber,
+			ReleaseMBID:      embedded.ReleaseMBID,
+			ReleaseGroupMBID: embedded.ReleaseGroupMBID,
+			ArtistMBID:       embedded.ArtistMBID,
+		},
+	}
+	if err := m.store.RecordIdentification(ctx, path, result); err != nil {
+		log.Printf("analysis pass: %s: recording identification from embedded tags: %v", path, err)
+		return false
+	}
+	if err := m.store.RecordTagged(ctx, path, true, ""); err != nil {
+		log.Printf("analysis pass: %s: marking tagged after identification from embedded tags: %v", path, err)
+	}
+	return true
 }

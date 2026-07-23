@@ -72,6 +72,10 @@ export const EMBEDDED_TAG_FIELD_LABELS = [
   ['track_number', 'Track Number'],
   ['disc_number', 'Disc Number'],
   ['year', 'Year'],
+  ['recording_mbid', 'Recording MBID'],
+  ['release_mbid', 'Release MBID'],
+  ['release_group_mbid', 'Release-Group MBID'],
+  ['artist_mbid', 'Artist MBID'],
 ];
 
 // MusicBrainz's hard 1 req/sec rate limit (charter §4.2) means an identify

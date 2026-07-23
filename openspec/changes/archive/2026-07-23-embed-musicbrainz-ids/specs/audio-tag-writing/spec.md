@@ -1,8 +1,4 @@
-## Purpose
-
-On-demand writing of an already-identified tracked file's resolved artist, album artist, title, track/disc numbers, release year, cover art, and lyrics directly into the physical audio file's own tags — ID3v2 for MP3, Vorbis comments plus a `PICTURE` block for FLAC, and MP4/iTunes atoms for M4A — determined by the file's actual, content-detected format rather than trusted from its extension, and reading a file's actual embedded tags back directly from disk, independent of the tracking store, so what was written can be verified against what was resolved.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: On-demand tag writing for identified files
 The system SHALL, on demand and only for tracked files with status `identified`, write that file's resolved artist, album artist, title, track number, disc number/total discs, total tracks, release year, MusicBrainz recording/release/release-group/artist IDs (whichever are resolved), cover art (when stored), and plain lyrics (when stored) into the physical audio file's own tag format at its current path: ID3v2 for MP3, Vorbis comments plus a `PICTURE` metadata block for FLAC, and MP4/iTunes atoms for M4A — determined by the file's real, content-detected format (see the format-detection requirement below), not assumed from its `.mp3`/`.flac`/`.m4a` extension.

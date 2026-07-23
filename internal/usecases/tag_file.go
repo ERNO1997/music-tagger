@@ -45,17 +45,21 @@ func (t *TagFile) Tag(ctx context.Context, path string) (skipped bool, err error
 	}
 
 	input := TagInput{
-		Artist:      rec.Artist,
-		Album:       rec.Album,
-		Title:       rec.Title,
-		AlbumArtist: rec.AlbumArtist,
-		TrackNumber: rec.TrackNumber,
-		TotalTracks: rec.TotalTracks,
-		DiscNumber:  rec.DiscNumber,
-		TotalDiscs:  rec.TotalDiscs,
-		Year:        rec.Year,
-		CoverArt:    coverArt,
-		Lyrics:      rec.Lyrics,
+		Artist:           rec.Artist,
+		Album:            rec.Album,
+		Title:            rec.Title,
+		AlbumArtist:      rec.AlbumArtist,
+		TrackNumber:      rec.TrackNumber,
+		TotalTracks:      rec.TotalTracks,
+		DiscNumber:       rec.DiscNumber,
+		TotalDiscs:       rec.TotalDiscs,
+		Year:             rec.Year,
+		RecordingMBID:    rec.RecordingMBID,
+		ReleaseMBID:      rec.ReleaseMBID,
+		ReleaseGroupMBID: rec.ReleaseGroupMBID,
+		ArtistMBID:       rec.ArtistMBID,
+		CoverArt:         coverArt,
+		Lyrics:           rec.Lyrics,
 	}
 
 	if tagErr := t.tagger.Tag(ctx, path, input); tagErr != nil {

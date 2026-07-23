@@ -18,6 +18,11 @@ type EmbeddedTagsResponse struct {
 	DiscNumber  int    `json:"disc_number,omitempty"`
 	Year        int    `json:"year,omitempty"`
 
+	RecordingMBID    string `json:"recording_mbid,omitempty"`
+	ReleaseMBID      string `json:"release_mbid,omitempty"`
+	ReleaseGroupMBID string `json:"release_group_mbid,omitempty"`
+	ArtistMBID       string `json:"artist_mbid,omitempty"`
+
 	HasLyrics   bool `json:"has_lyrics"`
 	HasCoverArt bool `json:"has_cover_art"`
 }
@@ -51,14 +56,18 @@ func (h *EmbeddedTagsHandler) Get(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(EmbeddedTagsResponse{
-		Title:       tags.Title,
-		Artist:      tags.Artist,
-		Album:       tags.Album,
-		AlbumArtist: tags.AlbumArtist,
-		TrackNumber: tags.TrackNumber,
-		DiscNumber:  tags.DiscNumber,
-		Year:        tags.Year,
-		HasLyrics:   tags.HasLyrics,
-		HasCoverArt: tags.HasCoverArt,
+		Title:            tags.Title,
+		Artist:           tags.Artist,
+		Album:            tags.Album,
+		AlbumArtist:      tags.AlbumArtist,
+		TrackNumber:      tags.TrackNumber,
+		DiscNumber:       tags.DiscNumber,
+		Year:             tags.Year,
+		RecordingMBID:    tags.RecordingMBID,
+		ReleaseMBID:      tags.ReleaseMBID,
+		ReleaseGroupMBID: tags.ReleaseGroupMBID,
+		ArtistMBID:       tags.ArtistMBID,
+		HasLyrics:        tags.HasLyrics,
+		HasCoverArt:      tags.HasCoverArt,
 	})
 }

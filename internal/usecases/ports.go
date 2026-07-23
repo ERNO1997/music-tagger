@@ -389,6 +389,16 @@ type TagInput struct {
 	TotalDiscs  int
 	Year        int
 
+	// RecordingMBID, ReleaseMBID, ReleaseGroupMBID, and ArtistMBID are
+	// written into the file's own tags (e.g. a UFID frame for the
+	// recording ID on MP3, TXXX/Vorbis-comment/MP4-freeform-atom for the
+	// rest) whenever resolved, so identification survives independently
+	// of the tracking store.
+	RecordingMBID    string
+	ReleaseMBID      string
+	ReleaseGroupMBID string
+	ArtistMBID       string
+
 	// CoverArt is the image bytes to embed, or nil if no cover art is
 	// stored for this file.
 	CoverArt []byte
@@ -409,6 +419,11 @@ type EmbeddedTags struct {
 	TrackNumber int
 	DiscNumber  int
 	Year        int
+
+	RecordingMBID    string
+	ReleaseMBID      string
+	ReleaseGroupMBID string
+	ArtistMBID       string
 
 	HasLyrics   bool
 	HasCoverArt bool
