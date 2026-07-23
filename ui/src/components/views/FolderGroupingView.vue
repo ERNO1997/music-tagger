@@ -100,6 +100,12 @@ function onNextPage() {
   fetchAndRender();
 }
 
+function onPageSizeChange(event) {
+  store.pageState.limit = Number(event.target.value);
+  offset.value = 0;
+  fetchAndRender();
+}
+
 // Re-fetches whatever folder is currently displayed, keeping the current
 // page position — for App.vue's refreshCurrentView after a bulk-action job
 // updates the currently-visible listing.
@@ -150,6 +156,16 @@ defineExpose({ loadTree, reloadTree, resetTreePage });
     <div class="flex items-center justify-between mt-3 text-sm text-neutral-400">
       <div>{{ paginationInfo() }}</div>
       <div class="flex items-center gap-2">
+        <select
+          :value="store.pageState.limit"
+          @change="onPageSizeChange"
+          class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5"
+        >
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+          <option value="200">200 / page</option>
+        </select>
         <button class="rounded-md bg-neutral-900 border border-neutral-800 px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="offset === 0" @click="onPrevPage">Prev</button>
         <button class="rounded-md bg-neutral-900 border border-neutral-800 px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="offset + store.pageState.limit >= total" @click="onNextPage">Next</button>
       </div>

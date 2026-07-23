@@ -271,6 +271,10 @@ The system SHALL serve a dark-mode web page that fetches `GET /api/v1/library` (
 - **WHEN** an entry has neither been relocated (or passively detected as already at its destination) nor had a relocation attempt fail
 - **THEN** the UI SHALL show neither indicator alongside that entry's path
 
+#### Scenario: An empty listing shows an explicit "no items" indicator
+- **WHEN** a grouping's current file/track listing has zero entries, whether because the library itself is empty, the active filter matches nothing, or the current folder/album has no files
+- **THEN** the UI SHALL show an explicit "no items" message in place of the row/card list, rather than an empty table header or blank grid area
+
 ### Requirement: Toggling the table/grid view to show only the current selection
 The system SHALL expose a `POST /api/v1/library/selection` endpoint accepting the same request body shape as `POST /api/v1/library/identify` (`paths` or `filter`), plus the same `sort`/`order`/`limit`/`offset` query parameters as `GET /api/v1/library`, and returning a page of matching entries in the same shape as `GET /api/v1/library`'s response. The system SHALL provide a "show selected only" toggle, available in the table and grid views whenever one or more files are explicitly selected, that — while enabled — fetches that view's rows/cards from the selection endpoint instead of `GET /api/v1/library`, using that view's own current sort and pagination state, so the existing row/card checkboxes (rather than a separate control) serve as the way to remove a file from the selection. The toggle SHALL be unavailable (or a no-op) while "select all matching" (filter mode) is active, since the currently filtered listing already is the selection in that mode.
 

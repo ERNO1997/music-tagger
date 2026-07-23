@@ -132,6 +132,9 @@ function onRowClick(entry) {
         </tr>
       </thead>
       <tbody class="divide-y divide-neutral-800">
+        <tr v-if="entries.length === 0">
+          <td colspan="9" class="px-4 py-8 text-center text-neutral-500">No items match the current filters.</td>
+        </tr>
         <tr
           v-for="entry in entries"
           :key="entry.path"

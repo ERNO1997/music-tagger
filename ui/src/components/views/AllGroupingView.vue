@@ -28,6 +28,12 @@ function onNextPage() {
   store.pageState.offset += store.pageState.limit;
   loadLibrary();
 }
+
+function onPageSizeChange(event) {
+  store.pageState.limit = Number(event.target.value);
+  store.pageState.offset = 0;
+  loadLibrary();
+}
 </script>
 
 <template>
@@ -38,6 +44,16 @@ function onNextPage() {
     <div class="flex items-center justify-between mt-3 text-sm text-neutral-400">
       <div>{{ paginationInfo }}</div>
       <div class="flex items-center gap-2">
+        <select
+          :value="store.pageState.limit"
+          @change="onPageSizeChange"
+          class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5"
+        >
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+          <option value="200">200 / page</option>
+        </select>
         <button class="rounded-md bg-neutral-900 border border-neutral-800 px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="prevDisabled" @click="onPrevPage">Prev</button>
         <button class="rounded-md bg-neutral-900 border border-neutral-800 px-3 py-1.5 disabled:opacity-40 disabled:cursor-not-allowed" :disabled="nextDisabled" @click="onNextPage">Next</button>
       </div>

@@ -143,7 +143,7 @@ onMounted(async () => {
 
 <template>
   <div class="max-w-6xl mx-auto p-6 pb-24">
-    <div class="flex items-start justify-between gap-4 mb-1">
+    <div class="sticky top-0 z-10 bg-neutral-950 flex items-start justify-between gap-4 mb-1 py-3 border-b border-neutral-800">
       <h1 class="text-2xl font-semibold">Music Tagger</h1>
       <div class="flex gap-2 shrink-0">
         <button

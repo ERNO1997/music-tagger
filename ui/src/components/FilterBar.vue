@@ -23,11 +23,6 @@ function onSearchInput(event) {
     emit('change');
   }, 300);
 }
-
-function onPageSizeChange(event) {
-  store.pageState.limit = Number(event.target.value);
-  emit('change');
-}
 </script>
 
 <template>
@@ -87,15 +82,5 @@ function onPageSizeChange(event) {
       placeholder="Search path / artist / album / title…"
       class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-3 py-1.5 flex-1 min-w-[200px]"
     />
-    <select
-      :value="store.pageState.limit"
-      @change="onPageSizeChange"
-      class="rounded-md bg-neutral-900 border border-neutral-800 text-sm px-2 py-1.5"
-    >
-      <option value="25">25 / page</option>
-      <option value="50">50 / page</option>
-      <option value="100">100 / page</option>
-      <option value="200">200 / page</option>
-    </select>
   </div>
 </template>
