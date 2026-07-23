@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,6 +79,16 @@ func NewSQLiteStore(ctx context.Context, dbPath string) (*SQLiteStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database: %w", err)
 	}
+
+	// modernc.org/sqlite (this project's pure-Go, CGO-free driver) corrupts
+	// a WAL-mode database's freelist when Go's database/sql pool hands out
+	// more than one concurrent OS-level connection into the same file — as
+	// this project's several independent background job goroutines
+	// (scan/analysis/identify/enrich/tag/relocate) can all do against this
+	// same *sql.DB. Capping the pool at one connection serializes every
+	// query/exec through it, eliminating the concurrent-writer hazard.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL;"); err != nil {
 		db.Close()
@@ -1065,85 +1076,158 @@ func (s *SQLiteStore) PathsUnder(ctx context.Context, prefix string) ([]domain.F
 	return records, nil
 }
 
-// ListArtists returns every distinct artist grouping (resolved artist,
-// falling back to raw tag artist, falling back to usecases.UnknownArtist)
-// honoring filter, each with its total matching track count.
+// artistKeyPredicate translates an artist grouping key (as produced by
+// usecases.GroupArtists / returned in ArtistSummary.Key) into a
+// parameterized WHERE clause fragment matching exactly the files belonging
+// to that grouping: an ArtistMBID equality for an MBID-keyed group, or an
+// unidentified (blank artist_mbid) name match for a "name:"-prefixed key.
+func artistKeyPredicate(artistKey string) (string, []any) {
+	if strings.HasPrefix(artistKey, "name:") {
+		name := strings.TrimPrefix(artistKey, "name:")
+		return "(artist_mbid = '' AND COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?)",
+			[]any{usecases.UnknownArtist, name}
+	}
+	return "artist_mbid = ?", []any{artistKey}
+}
+
+// albumKeyPredicate is artistKeyPredicate's album-grouping counterpart,
+// scoped by its caller alongside an artistKeyPredicate clause.
+func albumKeyPredicate(albumKey string) (string, []any) {
+	if strings.HasPrefix(albumKey, "name:") {
+		name := strings.TrimPrefix(albumKey, "name:")
+		return "(release_group_mbid = '' AND COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) = ?)",
+			[]any{usecases.UnknownAlbum, name}
+	}
+	return "release_group_mbid = ?", []any{albumKey}
+}
+
+// ListArtists returns every distinct artist grouping honoring filter,
+// computed in Go by usecases.GroupArtists from the raw per-file rows
+// matching filter — see that function for the MBID-first grouping and
+// mismatch-detection rules.
 func (s *SQLiteStore) ListArtists(ctx context.Context, filter usecases.LibraryFilter) ([]usecases.ArtistSummary, error) {
 	where, args := buildLibraryWhere(filter)
 
-	query := `
-		SELECT COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) AS artist_name, COUNT(*) AS track_count
-		FROM files`
-	queryArgs := append([]any{usecases.UnknownArtist}, args...)
+	query := `SELECT artist, raw_artist, artist_mbid FROM files`
 	if where != "" {
 		query += " WHERE " + where
 	}
-	query += " GROUP BY artist_name ORDER BY artist_name COLLATE NOCASE"
 
-	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("querying artists: %w", err)
 	}
 	defer rows.Close()
 
-	var artists []usecases.ArtistSummary
+	var artistRows []usecases.ArtistRow
 	for rows.Next() {
-		var a usecases.ArtistSummary
-		if err := rows.Scan(&a.Artist, &a.TrackCount); err != nil {
+		var r usecases.ArtistRow
+		if err := rows.Scan(&r.Artist, &r.RawArtist, &r.ArtistMBID); err != nil {
 			return nil, fmt.Errorf("scanning artist row: %w", err)
 		}
-		artists = append(artists, a)
+		artistRows = append(artistRows, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading artist rows: %w", err)
 	}
 
-	return artists, nil
+	return usecases.GroupArtists(artistRows), nil
 }
 
-// ListAlbums returns every distinct album grouping for artist (matched
-// against the same resolved-or-raw-or-unknown expression ListArtists
-// groups by) honoring filter, each with its matching track count.
-func (s *SQLiteStore) ListAlbums(ctx context.Context, artist string, filter usecases.LibraryFilter) ([]usecases.AlbumSummary, error) {
+// ListAlbums returns every distinct album grouping for the artist grouping
+// identified by artistKey honoring filter, computed in Go by
+// usecases.GroupAlbums from the raw per-file rows matching both the artist
+// key and filter.
+func (s *SQLiteStore) ListAlbums(ctx context.Context, artistKey string, filter usecases.LibraryFilter) ([]usecases.AlbumSummary, error) {
 	where, args := buildLibraryWhere(filter)
+	artistClause, artistArgs := artistKeyPredicate(artistKey)
 
-	query := `
-		SELECT COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) AS album_name, COUNT(*) AS track_count
-		FROM files
-		WHERE COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?`
-	queryArgs := []any{usecases.UnknownAlbum, usecases.UnknownArtist, artist}
+	query := `SELECT album, raw_album, release_group_mbid FROM files WHERE ` + artistClause
+	queryArgs := append([]any{}, artistArgs...)
 	if where != "" {
 		query += " AND " + where
 		queryArgs = append(queryArgs, args...)
 	}
-	query += " GROUP BY album_name ORDER BY album_name COLLATE NOCASE"
 
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("querying albums for %s: %w", artist, err)
+		return nil, fmt.Errorf("querying albums for %s: %w", artistKey, err)
 	}
 	defer rows.Close()
 
-	var albums []usecases.AlbumSummary
+	var albumRows []usecases.AlbumRow
 	for rows.Next() {
-		var a usecases.AlbumSummary
-		if err := rows.Scan(&a.Album, &a.TrackCount); err != nil {
+		var r usecases.AlbumRow
+		if err := rows.Scan(&r.Album, &r.RawAlbum, &r.ReleaseGroupMBID); err != nil {
 			return nil, fmt.Errorf("scanning album row: %w", err)
 		}
-		albums = append(albums, a)
+		albumRows = append(albumRows, r)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading album rows: %w", err)
 	}
 
-	return albums, nil
+	return usecases.GroupAlbums(albumRows), nil
 }
 
-// ListTracks returns artist+album's matching tracks (matched against the
-// same resolved-or-raw-or-unknown expressions ListArtists/ListAlbums group
-// by) honoring filter, sorted by track number.
-func (s *SQLiteStore) ListTracks(ctx context.Context, artist, album string, filter usecases.LibraryFilter) ([]domain.FileRecord, error) {
+// ResolveArtistKey resolves an artist display name to its grouping key: the
+// first non-blank ArtistMBID among files whose resolved-or-raw-or-unknown
+// name matches, or a "name:"-prefixed key if none is identified. See
+// usecases.TrackingStore.ResolveArtistKey for the label-collision caveat.
+func (s *SQLiteStore) ResolveArtistKey(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	var mbid string
+	row := s.db.QueryRowContext(ctx, `
+		SELECT artist_mbid FROM files
+		WHERE COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?
+		  AND artist_mbid != ''
+		LIMIT 1`, usecases.UnknownArtist, name)
+	switch err := row.Scan(&mbid); {
+	case err == nil:
+		return mbid, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return "name:" + name, nil
+	default:
+		return "", fmt.Errorf("resolving artist key for %s: %w", name, err)
+	}
+}
+
+// ResolveAlbumKey resolves an album display name, scoped to the artist
+// grouping identified by artistKey, to its grouping key — the album-level
+// counterpart to ResolveArtistKey.
+func (s *SQLiteStore) ResolveAlbumKey(ctx context.Context, artistKey, albumName string) (string, error) {
+	if albumName == "" {
+		return "", nil
+	}
+	artistClause, artistArgs := artistKeyPredicate(artistKey)
+
+	query := `
+		SELECT release_group_mbid FROM files
+		WHERE ` + artistClause + ` AND COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) = ?
+		  AND release_group_mbid != ''
+		LIMIT 1`
+	args := append(append([]any{}, artistArgs...), usecases.UnknownAlbum, albumName)
+
+	var mbid string
+	row := s.db.QueryRowContext(ctx, query, args...)
+	switch err := row.Scan(&mbid); {
+	case err == nil:
+		return mbid, nil
+	case errors.Is(err, sql.ErrNoRows):
+		return "name:" + albumName, nil
+	default:
+		return "", fmt.Errorf("resolving album key for %s: %w", albumName, err)
+	}
+}
+
+// ListTracks returns the tracks belonging to the artist/album groupings
+// identified by artistKey/albumKey honoring filter, sorted by track number.
+func (s *SQLiteStore) ListTracks(ctx context.Context, artistKey, albumKey string, filter usecases.LibraryFilter) ([]domain.FileRecord, error) {
 	where, args := buildLibraryWhere(filter)
+	artistClause, artistArgs := artistKeyPredicate(artistKey)
+	albumClause, albumArgs := albumKeyPredicate(albumKey)
 
 	query := `
 		SELECT path, format, fingerprint, duration_seconds, size, mtime, status, missing, fingerprint_error,
@@ -1152,9 +1236,8 @@ func (s *SQLiteStore) ListTracks(ctx context.Context, artist, album string, filt
 		       cover_art_path, lyrics, synced_lyrics, tagged, tag_error, relocated, relocate_error,
 		       raw_title, raw_artist, raw_album, raw_album_artist
 		FROM files
-		WHERE COALESCE(NULLIF(artist, ''), NULLIF(raw_artist, ''), ?) = ?
-		  AND COALESCE(NULLIF(album, ''), NULLIF(raw_album, ''), ?) = ?`
-	queryArgs := []any{usecases.UnknownArtist, artist, usecases.UnknownAlbum, album}
+		WHERE ` + artistClause + ` AND ` + albumClause
+	queryArgs := append(append([]any{}, artistArgs...), albumArgs...)
 	if where != "" {
 		query += " AND " + where
 		queryArgs = append(queryArgs, args...)
@@ -1163,7 +1246,7 @@ func (s *SQLiteStore) ListTracks(ctx context.Context, artist, album string, filt
 
 	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
-		return nil, fmt.Errorf("querying tracks for %s/%s: %w", artist, album, err)
+		return nil, fmt.Errorf("querying tracks for %s/%s: %w", artistKey, albumKey, err)
 	}
 	defer rows.Close()
 

@@ -105,7 +105,8 @@ func main() {
 
 	treeBrowse := usecases.NewTreeBrowse(store)
 	treeHandler := v1.NewTreeHandler(treeBrowse, musicRoot)
-	artistAlbumHandler := v1.NewArtistAlbumHandler(store)
+	completenessChecker := usecases.NewCompletenessChecker(store, musicBrainzClient)
+	artistAlbumHandler := v1.NewArtistAlbumHandler(store, completenessChecker)
 	audioHandler := v1.NewAudioHandler(store)
 	analyzeHandler := v1.NewAnalyzeHandler(analysisManager)
 

@@ -1,27 +1,4 @@
-## Purpose
-
-Alternative ways to browse the tracked music library beyond the flat, paginated table/grid: a folder tree reflecting the mounted `/music` volume's actual on-disk directory structure, and an Artist-Album grouping derived from resolved (or raw-tag-fallback) metadata. Both are read-only views layered over the same tracking-store data exposed by the `music-library-scan` capability's `GET /api/v1/library` endpoint.
-
-## Requirements
-
-### Requirement: Folder tree browsing via API
-The system SHALL expose a `GET /api/v1/library/tree` endpoint that, given an optional `path` prefix (defaulting to the music root), returns the immediate subdirectories under that prefix (each with its total tracked file count and identified-file count) and the tracked files directly at that level (in the same shape and accepting the same filter/sort/pagination query parameters as `GET /api/v1/library`), reflecting the mounted `/music` volume's actual on-disk directory structure.
-
-#### Scenario: Browsing the root
-- **WHEN** a client issues `GET /api/v1/library/tree` with no `path` parameter
-- **THEN** the response SHALL include the immediate subdirectories of the music root, each with its total and identified file counts, and any tracked files directly at the root level
-
-#### Scenario: Browsing a subdirectory
-- **WHEN** a client issues `GET /api/v1/library/tree?path=<subdirectory>` for a subdirectory containing tracked files
-- **THEN** the response SHALL include that subdirectory's own immediate subdirectories and its directly-contained tracked files
-
-#### Scenario: Filters and search apply within the current directory level
-- **WHEN** a client issues `GET /api/v1/library/tree` with a `status`, `tagged`, `relocated`, `has_lyrics`, `has_cover_art`, or `q` parameter
-- **THEN** the returned subdirectory counts and direct files SHALL reflect only tracked files matching that filter
-
-#### Scenario: An empty or non-existent prefix returns an empty result
-- **WHEN** a client issues `GET /api/v1/library/tree?path=<prefix>` for a prefix with no tracked files under it
-- **THEN** the response SHALL be `200 OK` with no subdirectories and no files, rather than an error
+## MODIFIED Requirements
 
 ### Requirement: Artist and album browsing via API
 The system SHALL expose `GET /api/v1/library/artists`, `GET /api/v1/library/albums`, and `GET /api/v1/library/tracks` endpoints for browsing the tracked library grouped by artist and album. Grouping SHALL key on a tracked file's `artist_mbid` (for artists) and `release_group_mbid` scoped within the artist group (for albums) when identified, falling back to its resolved name, then its raw tag snapshot's name, then a distinguished "unknown" bucket, when no MBID is available — so unidentified files are not excluded from this view. Each artist/album grouping SHALL expose a stable `artist_key`/`album_key` (the MBID when present, otherwise a name-derived key) alongside its display name, and `GET /api/v1/library/albums` and `GET /api/v1/library/tracks` SHALL accept `artist_key`/`album_key` query parameters to select a group unambiguously; the previously-supported `artist`/`album` name query parameters SHALL continue to be accepted for backward compatibility, resolved to a key the same way grouping does.
@@ -61,6 +38,8 @@ The system SHALL expose `GET /api/v1/library/artists`, `GET /api/v1/library/albu
 #### Scenario: Filters and search apply to artist/album/track listings
 - **WHEN** any of these three endpoints is issued with a `status`, `tagged`, `relocated`, `has_lyrics`, or `has_cover_art` filter
 - **THEN** the returned artists, albums, or tracks SHALL reflect only tracked files matching that filter
+
+## ADDED Requirements
 
 ### Requirement: Mismatch flagging in artist/album grouping
 The system SHALL flag an artist or album grouping when the grouping decision papers over a disagreement in the underlying data, rather than silently resolving it: (a) **name mismatch**, when a group's files share the same MBID but disagree on the resolved/raw name string; and (b) **label collision**, when two distinct groupings (different `artist_key`s or `album_key`s) resolve to the same display label. Both flags SHALL be included in the `GET /api/v1/library/artists` and `GET /api/v1/library/albums` responses.
@@ -110,30 +89,3 @@ Given an album grouping with a non-empty `release_group_mbid`, the system SHALL 
 #### Scenario: MusicBrainz request failure
 - **WHEN** the underlying MusicBrainz request fails
 - **THEN** the system SHALL return an error distinct from "album fully complete," so the caller can distinguish "checked, nothing missing" from "check failed"
-
-### Requirement: Selecting files in the folder tree and Artist-Album views
-The system SHALL allow selecting one or more files directly from the folder tree view's file listing and the Artist-Album view's track listing, using the same selection state (explicit set, or "all matching the current filter") already shared across the table and grid views, so that selections made in — or bulk actions (identify/enrich/tag/relocate) triggered from — any of the four views apply consistently regardless of which view is currently active.
-
-#### Scenario: Selecting a file in the folder tree
-- **WHEN** a user checks a file's checkbox while browsing the folder tree view
-- **THEN** that file SHALL be added to the current selection, and the selection banner SHALL reflect the updated count
-
-#### Scenario: Selecting a track in the Artist-Album view
-- **WHEN** a user checks a track's checkbox while viewing an album's track listing
-- **THEN** that track SHALL be added to the current selection, and the selection banner SHALL reflect the updated count
-
-#### Scenario: Selecting all files on the current folder page
-- **WHEN** a user checks the "select all" header checkbox while browsing a folder's file listing
-- **THEN** every file currently listed on that page SHALL be selected
-
-#### Scenario: Selecting all tracks in the current album
-- **WHEN** a user checks the "select all" header checkbox while viewing an album's track listing
-- **THEN** every track in that album's listing SHALL be selected
-
-#### Scenario: Selection persists when switching to or from these views
-- **WHEN** a user has files selected and switches between the folder tree, Artist-Album, table, or grid views
-- **THEN** the selection SHALL remain unchanged, and each view SHALL reflect it (checked rows where the file is visible, an accurate count in the selection banner regardless)
-
-#### Scenario: Directory and artist/album cards are not individually selectable
-- **WHEN** a user is browsing the folder tree's directory cards or the Artist-Album view's artist/album cards (not yet drilled into a file listing)
-- **THEN** the system SHALL NOT offer a selection checkbox for those cards, since they represent groupings rather than individual tracked files

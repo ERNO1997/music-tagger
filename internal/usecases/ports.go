@@ -152,20 +152,37 @@ type TrackingStore interface {
 	// direct files.
 	PathsUnder(ctx context.Context, prefix string) ([]domain.FileRecord, error)
 
-	// ListArtists returns every distinct artist name honoring filter — an
-	// identified file's resolved artist, falling back to its raw tag
-	// artist, falling back to the distinguished UnknownArtist bucket —
-	// each with its total matching track count.
+	// ListArtists returns every distinct artist grouping honoring filter,
+	// keyed by ArtistMBID when present (falling back to a name-derived key
+	// for unidentified files — see GroupArtists), each with its
+	// representative display name, total matching track count, and
+	// mismatch flags.
 	ListArtists(ctx context.Context, filter LibraryFilter) ([]ArtistSummary, error)
 
-	// ListAlbums returns every distinct album for artist (matched against
-	// the same resolved-or-raw-or-unknown grouping ListArtists produces)
-	// honoring filter, each with its matching track count.
-	ListAlbums(ctx context.Context, artist string, filter LibraryFilter) ([]AlbumSummary, error)
+	// ListAlbums returns every distinct album grouping for the artist
+	// grouping identified by artistKey (as returned in ArtistSummary.Key)
+	// honoring filter, keyed by ReleaseGroupMBID when present (see
+	// GroupAlbums), each with its representative display name, matching
+	// track count, and mismatch flags.
+	ListAlbums(ctx context.Context, artistKey string, filter LibraryFilter) ([]AlbumSummary, error)
 
-	// ListTracks returns artist+album's matching tracks honoring filter,
-	// sorted by track number.
-	ListTracks(ctx context.Context, artist, album string, filter LibraryFilter) ([]domain.FileRecord, error)
+	// ListTracks returns the tracks belonging to the artist/album groupings
+	// identified by artistKey/albumKey honoring filter, sorted by track
+	// number.
+	ListTracks(ctx context.Context, artistKey, albumKey string, filter LibraryFilter) ([]domain.FileRecord, error)
+
+	// ResolveArtistKey resolves an artist display name to its current
+	// grouping key, for backward compatibility with callers that identify
+	// an artist by name rather than by the key ListArtists returns. Lossy
+	// exactly when a label collision exists (see ArtistSummary.LabelCollision)
+	// — a name alone can't disambiguate two groups sharing a display label.
+	ResolveArtistKey(ctx context.Context, name string) (string, error)
+
+	// ResolveAlbumKey resolves an album display name, scoped to the artist
+	// grouping identified by artistKey, to its current grouping key — the
+	// album-level counterpart to ResolveArtistKey, with the same
+	// label-collision caveat.
+	ResolveAlbumKey(ctx context.Context, artistKey, albumName string) (string, error)
 }
 
 // UnknownArtist and UnknownAlbum are the distinguished bucket names
@@ -177,17 +194,42 @@ const (
 )
 
 // ArtistSummary is one distinct artist grouping, as returned by
-// ListArtists.
+// ListArtists. Key is the grouping key (ArtistMBID when present, else a
+// name-derived key) used to unambiguously select this grouping in
+// subsequent ListAlbums/ListTracks/completeness-check calls — necessary
+// because Artist (the display label) can collide across two different
+// groupings (see LabelCollision).
 type ArtistSummary struct {
+	Key        string
 	Artist     string
 	TrackCount int
+
+	// NameMismatch is true when this grouping's files share one MBID but
+	// disagree on the resolved/raw artist name string; DistinctNames then
+	// holds the names observed. Always false for a name-derived key (there
+	// is no MBID to disagree about).
+	NameMismatch bool
+
+	// LabelCollision is true when another grouping (a different Key)
+	// resolves to the same display label as this one.
+	LabelCollision bool
+
+	// DistinctNames holds every distinct name observed in this grouping,
+	// populated only when NameMismatch is true.
+	DistinctNames []string
 }
 
-// AlbumSummary is one distinct album grouping for a given artist, as
-// returned by ListAlbums.
+// AlbumSummary is one distinct album grouping for a given artist grouping,
+// as returned by ListAlbums. See ArtistSummary for the meaning of Key,
+// NameMismatch, LabelCollision, and DistinctNames — identical rules, scoped
+// to release-group MBID and album name instead of artist MBID and name.
 type AlbumSummary struct {
-	Album      string
-	TrackCount int
+	Key            string
+	Album          string
+	TrackCount     int
+	NameMismatch   bool
+	LabelCollision bool
+	DistinctNames  []string
 }
 
 // LibraryFilter narrows a QueryPage/QueryPaths read. A zero-value
@@ -336,6 +378,32 @@ type ReleaseGroupRelease struct {
 // as MusicBrainzLookup, since both hit the same MusicBrainz web service.
 type MusicBrainzReleaseGroupLookup interface {
 	Releases(ctx context.Context, releaseGroupMBID string) ([]ReleaseGroupRelease, error)
+}
+
+// ArtistReleaseGroupSummary is one album in an artist's MusicBrainz
+// discography, as returned by MusicBrainzDiscographyLookup.ArtistReleaseGroups.
+type ArtistReleaseGroupSummary struct {
+	ReleaseGroupMBID string
+	Title            string
+	Year             int
+}
+
+// ReleaseTrackSummary is one track on a MusicBrainz release, as returned by
+// MusicBrainzDiscographyLookup.ReleaseTracklist.
+type ReleaseTrackSummary struct {
+	RecordingMBID string
+	Title         string
+	TrackNumber   int
+}
+
+// MusicBrainzDiscographyLookup resolves an artist's full release-group
+// catalog and a release's full tracklist, for comparing the local library
+// against MusicBrainz's actual catalog (the "completeness check"). Both
+// operations are subject to the same centralized rate limit as
+// MusicBrainzLookup, since they hit the same MusicBrainz web service.
+type MusicBrainzDiscographyLookup interface {
+	ArtistReleaseGroups(ctx context.Context, artistMBID string) ([]ArtistReleaseGroupSummary, error)
+	ReleaseTracklist(ctx context.Context, releaseMBID string) ([]ReleaseTrackSummary, error)
 }
 
 // CoverArtCandidate is one release's front-cover image, offered as an

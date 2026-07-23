@@ -63,6 +63,33 @@ export async function fetchTracks(params) {
   return res.json();
 }
 
+// fetchArtistCompleteness/fetchAlbumCompleteness compare the local library
+// against MusicBrainz's own catalog for an MBID-keyed artist/album
+// grouping. A 422 means the grouping has no MusicBrainz ID (unidentified) —
+// callers should not offer the completeness action in that case, so this
+// surfaces as a distinguishable error rather than a generic failure.
+export async function fetchArtistCompleteness(params) {
+  const res = await fetch(`/api/v1/library/artists/completeness?${params.toString()}`);
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const err = new Error(errBody.error || `request failed: ${res.status}`);
+    err.unavailable = res.status === 422;
+    throw err;
+  }
+  return res.json();
+}
+
+export async function fetchAlbumCompleteness(params) {
+  const res = await fetch(`/api/v1/library/albums/completeness?${params.toString()}`);
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const err = new Error(errBody.error || `request failed: ${res.status}`);
+    err.unavailable = res.status === 422;
+    throw err;
+  }
+  return res.json();
+}
+
 export async function deleteLibraryEntry(path) {
   const res = await fetch(`/api/v1/library/entry?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
   if (res.status !== 204 && res.status !== 200) {
